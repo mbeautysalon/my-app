@@ -139,12 +139,30 @@ const INITIAL_STAFF = {
   1: ["Test-A", "Test-B", "Test-C"],
 };
 
-const todayStr = () => new Date().toISOString().slice(0, 10);
+/* const todayStr = () => new Date().toISOString().slice(0, 10);
 const dateStr = (offset) => {
   const d = new Date();
   d.setDate(d.getDate() + offset);
   return d.toISOString().slice(0, 10);
-};
+}; */
+
+//New Start
+function localDateKey(date = new Date()) {
+  const y = date.getFullYear();
+  const m = String(date.getMonth() + 1).padStart(2, "0");
+  const d = String(date.getDate()).padStart(2, "0");
+
+  return `${y}-${m}-${d}`;
+}
+
+const todayStr = () => localDateKey();
+
+const dateStr = (offset) => {
+  const d = new Date();
+  d.setDate(d.getDate() + offset);
+  return localDateKey(d);
+}; //New End
+
 
 const INITIAL_BOOKINGS = [
   { id: 1, branch: 0, name: "Test Chen", phone: "0917 ??3 4567", serviceId: 4, staff: "Jenny", date: todayStr(), time: "10:00", note: "" },
@@ -284,7 +302,9 @@ function getWeekDates(offset) {
     return d;
   });
 }
-const dKey = (d) => d.toISOString().slice(0, 10);
+// const dKey = (d) => d.toISOString().slice(0, 10);
+const dKey = (d) => localDateKey(d);
+
 
 function fileToDataUrl(file) {
   return new Promise((resolve) => {
