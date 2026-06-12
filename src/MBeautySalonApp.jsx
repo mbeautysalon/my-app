@@ -28,9 +28,9 @@ const BRANCHES = [
     nameZh: "Lahug 分店",
     nameEn: "Lahug Branch",
     sub: "Salinas Premier",
-    addr: "Salinas Premier, Lahug, Cebu City",
-    phone: "+63 917 000 0001",
-    hours: "Mon–Sat 9:00–19:00 · Sun 10:00–17:00",
+    addr: "2F, Salinas Premier, Lahug, Cebu City",
+    phone: "+63 967 2389044",
+    hours: "Mon–Sun 11:00–21:00",
     dot: "bg-rose-400",
   },
   {
@@ -39,8 +39,8 @@ const BRANCHES = [
     nameEn: "Emall Branch",
     sub: "Emall 2nd Floor",
     addr: "Emall, 2nd Floor, Cebu City",
-    phone: "+63 917 000 0002",
-    hours: "Mon–Sun 10:00–21:00",
+    phone: "+63 917 ??? ????",
+    hours: "Mon–Sun 09:00–20:00",
     dot: "bg-amber-400",
   },
 ];
