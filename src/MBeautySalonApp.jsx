@@ -29,7 +29,7 @@ const BRANCHES = [
     nameEn: "Lahug Branch",
     sub: "Salinas Premier",
     addr: "2F, Salinas Premier, Lahug, Cebu City",
-    phone: "+63 967 2389044",
+    phone: "+63 967 238 9044",
     hours: "Mon–Sun 11:00–21:00",
     dot: "bg-rose-400",
   },
@@ -38,8 +38,8 @@ const BRANCHES = [
     nameZh: "Emall 分店",
     nameEn: "Emall Branch",
     sub: "Emall 2nd Floor",
-    addr: "Emall, 2nd Floor, Cebu City",
-    phone: "+63 917 ??? ????",
+    addr: "2nd Floor(New extension area),Emall, Cebu City",
+    phone: "+63 917 621 7130",
     hours: "Mon–Sun 09:00–20:00",
     dot: "bg-amber-400",
   },
@@ -135,8 +135,8 @@ const INITIAL_SERVICES = [
 ];
 
 const INITIAL_STAFF = {
-  0: ["Jenny", "Grace", "Mark"],
-  1: ["Amy", "Cathy", "Leo"],
+  0: ["Test-A", "Test-B", "Test-C"],
+  1: ["Hair stylist-Jervin", "Nail techian-Fe", "Nail techian-13"],
 };
 
 const todayStr = () => new Date().toISOString().slice(0, 10);
@@ -147,8 +147,8 @@ const dateStr = (offset) => {
 };
 
 const INITIAL_BOOKINGS = [
-  { id: 1, branch: 0, name: "Linda Chen", phone: "0917 123 4567", serviceId: 4, staff: "Jenny", date: todayStr(), time: "10:00", note: "" },
-  { id: 2, branch: 0, name: "Sophie Lim", phone: "0917 987 6543", serviceId: 34, staff: "Grace", date: todayStr(), time: "13:30", note: "Light pink please" },
+  { id: 1, branch: 0, name: "Test Chen", phone: "0917 ??3 4567", serviceId: 4, staff: "Jenny", date: todayStr(), time: "10:00", note: "" },
+  { id: 2, branch: 0, name: "Test Lim", phone: "0917 9?? 6543", serviceId: 34, staff: "Grace", date: todayStr(), time: "13:30", note: "Light pink please" },
   { id: 3, branch: 1, name: "Maria Santos", phone: "", serviceId: 7, staff: "Amy", date: dateStr(1), time: "11:00", note: "" },
   { id: 4, branch: 0, name: "Jane Wu", phone: "", serviceId: 47, staff: "Grace", date: dateStr(-1), time: "15:00", note: "" },
 ];
