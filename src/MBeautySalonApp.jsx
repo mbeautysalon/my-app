@@ -135,8 +135,8 @@ const INITIAL_SERVICES = [
 ];
 
 const INITIAL_STAFF = {
-  0: ["Test-A", "Test-B", "Test-C"],
-  1: ["Hair stylist-Jervin", "Nail techian-Fe", "Nail techian-13"],
+  0: ["Hair stylist-Jervin", "Nail techian-Fe", "Nail techian-13"],
+  1: ["Test-A", "Test-B", "Test-C"],
 };
 
 const todayStr = () => new Date().toISOString().slice(0, 10);
