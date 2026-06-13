@@ -1,4 +1,4 @@
-import { useState, useMemo, useEffect, useRef } from "react";
+import { useState, useMemo, useEffect } from "react";
 
 import {
   Calendar, Scissors, MapPin, LogOut, Plus, X, Trash2,
@@ -7,10 +7,7 @@ import {
 } from "lucide-react";
 
 import { initializeApp } from "firebase/app";
-import {
-  getFirestore, collection, addDoc, getDocs, getDoc, query, orderBy, serverTimestamp,
-  doc, setDoc, updateDoc, deleteDoc, onSnapshot, writeBatch,
-} from "firebase/firestore";
+import { getFirestore, collection, addDoc, getDocs, query, orderBy, serverTimestamp } from "firebase/firestore";
 
 /* ════════════════════════════════════════════════════
    FIREBASE SETUP
@@ -189,9 +186,12 @@ const dateStr = (offset) => {
 }; //New End
 
 
-// Demo bookings removed — bookings are now stored in Firestore ("bookings" collection)
-// and start empty until the admin creates appointments.
-
+const INITIAL_BOOKINGS = [
+  { id: 1, branch: 0, name: "Test Chen", phone: "0917 ??3 4567", serviceId: 4, staff: "Jenny", date: todayStr(), time: "10:00", note: "" },
+  { id: 2, branch: 0, name: "Test Lim", phone: "0917 9?? 6543", serviceId: 34, staff: "Grace", date: todayStr(), time: "13:30", note: "Light pink please" },
+  { id: 3, branch: 1, name: "Maria Santos", phone: "", serviceId: 7, staff: "Amy", date: dateStr(1), time: "11:00", note: "" },
+  { id: 4, branch: 0, name: "Jane Wu", phone: "", serviceId: 47, staff: "Grace", date: dateStr(-1), time: "15:00", note: "" },
+];
 
 const DAYS_ZH = ["週日", "週一", "週二", "週三", "週四", "週五", "週六"];
 const DAYS_EN = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -242,12 +242,7 @@ const T = {
   noMessages: { zh: "目前沒有資料", en: "No messages yet" },
   loadingMessages: { zh: "載入中...", en: "Loading..." },
   refresh: { zh: "重新整理", en: "Refresh" },
-  liveSync: { zh: "即時同步中", en: "Live sync" },
   fetchError: { zh: "讀取失敗，請確認 Firebase 設定是否正確", en: "Failed to load — please check your Firebase config" },
-  syncError: { zh: "雲端同步失敗，請確認網路連線與 Firebase 設定", en: "Cloud sync failed — check your connection and Firebase config" },
-  imageTooLarge: { zh: "圖片檔案太大，無法存入雲端（僅顯示於本機，重新整理後會消失）", en: "Image is too large to sync to the cloud (shown locally only — will be lost on refresh)" },
-  cloudConnecting: { zh: "雲端連線中...", en: "Connecting to cloud..." },
-  timeoutError: { zh: "連線逾時，請重試", en: "Connection timed out — please try again" },
   logout: { zh: "登出", en: "Log Out" },
 
   appointmentCalendar: { zh: "預約行事曆", en: "Appointment Calendar" },
@@ -367,11 +362,10 @@ export default function App() {
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [toast, setToast] = useState(null);
 
-  // data — synced with Firestore in real time (see useEffect hooks below)
-  const [bookings, setBookings] = useState([]);
-  const [services, setServices] = useState([]);
+  // data
+  const [bookings, setBookings] = useState(INITIAL_BOOKINGS);
+  const [services, setServices] = useState(INITIAL_SERVICES);
   const [gallery, setGallery] = useState([]);
-  const [localGallery, setLocalGallery] = useState([]); // oversized images, local-only (not synced)
   const [branchInfo, setBranchInfo] = useState(BRANCHES);
   const [mapImages, setMapImages] = useState({ 0: null, 1: null }); // dataURL per branch
   const [staffList, setStaffList] = useState(INITIAL_STAFF); // {0:[names], 1:[names]}
@@ -393,137 +387,6 @@ export default function App() {
     setToast({ msg, type });
     setTimeout(() => setToast(null), 2800);
   };
-
-  /* ════════════════════════════════════════════════════
-     FIRESTORE REAL-TIME SYNC
-     每個 collection/doc 都用 onSnapshot 即時監聽，
-     任何裝置寫入後，所有畫面會自動更新；
-     重新整理頁面資料也不會消失。
-  ════════════════════════════════════════════════════ */
-
-  // bookings — collection "bookings"
-  useEffect(() => {
-    const unsub = onSnapshot(
-      collection(db, "bookings"),
-      (snap) => setBookings(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
-      (err) => console.error("bookings sync error:", err)
-    );
-    return unsub;
-  }, []);
-
-  // services — collection "services" (seed with INITIAL_SERVICES if empty)
-  useEffect(() => {
-    const unsub = onSnapshot(
-      collection(db, "services"),
-      async (snap) => {
-        if (snap.empty) {
-          try {
-            const batch = writeBatch(db);
-            INITIAL_SERVICES.forEach((s) => {
-              const { id, ...rest } = s;
-              batch.set(doc(collection(db, "services")), rest);
-            });
-            await batch.commit();
-          } catch (err) {
-            console.error("services seed error:", err);
-          }
-          return; // onSnapshot will fire again once seeded
-        }
-        setServices(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-      },
-      (err) => console.error("services sync error:", err)
-    );
-    return unsub;
-  }, []);
-
-  // staff list — doc "settings/staffList" (seed with INITIAL_STAFF if missing)
-  useEffect(() => {
-    const ref = doc(db, "settings", "staffList");
-    const unsub = onSnapshot(
-      ref,
-      async (snap) => {
-        if (!snap.exists()) {
-          try {
-            await setDoc(ref, INITIAL_STAFF);
-          } catch (err) {
-            console.error("staffList seed error:", err);
-          }
-          return;
-        }
-        const data = snap.data();
-        setStaffList({ 0: data["0"] || [], 1: data["1"] || [] });
-      },
-      (err) => console.error("staffList sync error:", err)
-    );
-    return unsub;
-  }, []);
-
-  // branch contact info — doc "settings/branchInfo" (seed from BRANCHES if missing)
-  useEffect(() => {
-    const ref = doc(db, "settings", "branchInfo");
-    const unsub = onSnapshot(
-      ref,
-      async (snap) => {
-        if (!snap.exists()) {
-          try {
-            const seed = {};
-            BRANCHES.forEach((b) => { seed[b.id] = { addr: b.addr, phone: b.phone, hours: b.hours }; });
-            await setDoc(ref, seed);
-          } catch (err) {
-            console.error("branchInfo seed error:", err);
-          }
-          return;
-        }
-        const data = snap.data();
-        setBranchInfo((prev) => prev.map((b) => ({ ...b, ...(data[b.id] || {}) })));
-      },
-      (err) => console.error("branchInfo sync error:", err)
-    );
-    return unsub;
-  }, []);
-
-  // busy status — collection "busyStatus"
-  useEffect(() => {
-    const unsub = onSnapshot(
-      collection(db, "busyStatus"),
-      (snap) => {
-        const grouped = { 0: [], 1: [] };
-        snap.docs.forEach((d) => {
-          const data = d.data();
-          const entry = { id: d.id, staff: data.staff, start: data.start, until: new Date(data.untilISO), dateKey: data.dateKey };
-          if (grouped[data.branch] !== undefined) grouped[data.branch].push(entry);
-        });
-        setBusy(grouped);
-      },
-      (err) => console.error("busyStatus sync error:", err)
-    );
-    return unsub;
-  }, []);
-
-  // map images — doc "settings/mapImages"
-  useEffect(() => {
-    const ref = doc(db, "settings", "mapImages");
-    const unsub = onSnapshot(
-      ref,
-      (snap) => {
-        if (!snap.exists()) return;
-        const data = snap.data();
-        setMapImages({ 0: data["0"] || null, 1: data["1"] || null });
-      },
-      (err) => console.error("mapImages sync error:", err)
-    );
-    return unsub;
-  }, []);
-
-  // gallery images — collection "gallery"
-  useEffect(() => {
-    const unsub = onSnapshot(
-      collection(db, "gallery"),
-      (snap) => setGallery(snap.docs.map((d) => ({ id: d.id, src: d.data().src }))),
-      (err) => console.error("gallery sync error:", err)
-    );
-    return unsub;
-  }, []);
 
   /* ───── LOGIN HANDLERS ───── */
   const handleLogin = (username, password) => {
@@ -564,35 +427,24 @@ export default function App() {
       setBookingModal({ mode: "view", data: { ...b } });
     }
   };
-  const saveBooking = async (data) => {
+  const saveBooking = (data) => {
     if (!data.name || !data.serviceId || !data.date || !data.time) {
       showToast(t("fillRequired"), "warn");
       return;
     }
-    const { id, ...payload } = data;
-    try {
-      if (bookingModal.mode === "edit" && id) {
-        await updateDoc(doc(db, "bookings", id), payload);
-      } else {
-        await addDoc(collection(db, "bookings"), payload);
-      }
-      setBookingModal(null);
-      showToast(t("savedAppt"), "success");
-    } catch (err) {
-      console.error("saveBooking error:", err);
-      showToast(t("syncError"), "warn");
+    if (bookingModal.mode === "edit") {
+      setBookings((prev) => prev.map((b) => (b.id === data.id ? { ...data } : b)));
+    } else {
+      setBookings((prev) => [...prev, { ...data, id: Date.now() }]);
     }
+    setBookingModal(null);
+    showToast(t("savedAppt"), "success");
   };
-  const deleteBooking = async (id) => {
+  const deleteBooking = (id) => {
     if (!window.confirm(t("confirmDeleteAppt"))) return;
-    try {
-      await deleteDoc(doc(db, "bookings", id));
-      setBookingModal(null);
-      showToast(t("deletedAppt"), "success");
-    } catch (err) {
-      console.error("deleteBooking error:", err);
-      showToast(t("syncError"), "warn");
-    }
+    setBookings((prev) => prev.filter((b) => b.id !== id));
+    setBookingModal(null);
+    showToast(t("deletedAppt"), "success");
   };
 
   /* ───── SERVICE HANDLERS ───── */
@@ -600,154 +452,80 @@ export default function App() {
     setServiceModal({ mode: "new", data: { id: null, cat: cat || "hair", nameZh: "", nameEn: "", priceZh: "", priceEn: "", dur: null } });
   };
   const openEditService = (s) => setServiceModal({ mode: "edit", data: { ...s } });
-  const saveService = async (data) => {
+  const saveService = (data) => {
     if (!data.nameZh.trim()) {
       showToast(t("enterServiceName"), "warn");
       return;
     }
-    const { id, ...rest } = data;
     const obj = {
-      ...rest,
+      ...data,
       nameEn: data.nameEn.trim() || data.nameZh,
       priceZh: data.priceZh.trim(),
       priceEn: data.priceEn.trim() || data.priceZh.trim(),
       dur: data.dur === null || data.dur === "" ? null : Number(data.dur),
     };
-    try {
-      if (serviceModal.mode === "edit" && id) {
-        await updateDoc(doc(db, "services", id), obj);
-      } else {
-        await addDoc(collection(db, "services"), obj);
-      }
-      setServiceModal(null);
-      showToast(t("savedService"), "success");
-    } catch (err) {
-      console.error("saveService error:", err);
-      showToast(t("syncError"), "warn");
+    if (serviceModal.mode === "edit") {
+      setServices((prev) => prev.map((s) => (s.id === obj.id ? obj : s)));
+    } else {
+      setServices((prev) => [...prev, { ...obj, id: Date.now() }]);
     }
+    setServiceModal(null);
+    showToast(t("savedService"), "success");
   };
-  const deleteService = async (id) => {
+  const deleteService = (id) => {
     if (!window.confirm(t("confirmDeleteService"))) return;
-    try {
-      await deleteDoc(doc(db, "services", id));
-      showToast(t("deletedService"), "success");
-    } catch (err) {
-      console.error("deleteService error:", err);
-      showToast(t("syncError"), "warn");
-    }
+    setServices((prev) => prev.filter((s) => s.id !== id));
+    showToast(t("deletedService"), "success");
   };
 
   /* ───── GALLERY HANDLERS ───── */
-  const MAX_IMAGE_BYTES = 700 * 1024; // ~700KB safety margin under Firestore's 1MB doc limit
   const handleGalleryUpload = async (e) => {
     const files = Array.from(e.target.files || []);
-    for (const file of files) {
-      const dataUrl = await fileToDataUrl(file);
-      if (dataUrl.length > MAX_IMAGE_BYTES) {
-        showToast(t("imageTooLarge"), "warn");
-        setLocalGallery((prev) => [...prev, { id: `local-${Date.now()}-${Math.random()}`, src: dataUrl }]);
-        continue;
-      }
-      try {
-        await addDoc(collection(db, "gallery"), { src: dataUrl });
-      } catch (err) {
-        console.error("gallery upload error:", err);
-        showToast(t("syncError"), "warn");
-      }
-    }
+    const items = await Promise.all(files.map(async (f) => ({ id: Date.now() + Math.random(), src: await fileToDataUrl(f) })));
+    setGallery((prev) => [...prev, ...items]);
     e.target.value = "";
   };
-  const deleteGalleryImg = async (id) => {
-    if (String(id).startsWith("local-")) {
-      setLocalGallery((prev) => prev.filter((g) => g.id !== id));
-      return;
-    }
-    try {
-      await deleteDoc(doc(db, "gallery", id));
-    } catch (err) {
-      console.error("gallery delete error:", err);
-      showToast(t("syncError"), "warn");
-    }
-  };
-  const galleryAll = [...gallery, ...localGallery];
+  const deleteGalleryImg = (id) => setGallery((prev) => prev.filter((g) => g.id !== id));
 
   /* ───── BUSY HANDLERS ───── */
-  const addBusy = async (staffName, minutes) => {
+  const addBusy = (staffName, minutes) => {
     const now = new Date();
     const start = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
     const until = new Date(now.getTime() + minutes * 60000);
-    try {
-      await addDoc(collection(db, "busyStatus"), {
-        branch: branchIdx,
-        staff: staffName,
-        start,
-        untilISO: until.toISOString(),
-        dateKey: dKey(now),
-      });
-      const durLabel = minutes < 60
-        ? (lang === "zh" ? `${minutes} 分鐘` : `${minutes} min`)
-        : (lang === "zh" ? `${minutes / 60} 小時` : `${minutes / 60} hr`);
-      showToast(
-        lang === "zh" ? `已將 ${staffName} 設為忙碌中，${start} 起 ${durLabel}` : `${staffName} set busy for ${durLabel} from ${start}`,
-        "warn"
-      );
-    } catch (err) {
-      console.error("addBusy error:", err);
-      showToast(t("syncError"), "warn");
-    }
+    const entry = { id: Date.now(), staff: staffName, start, until, dateKey: dKey(now) };
+    setBusy((prev) => ({ ...prev, [branchIdx]: [...prev[branchIdx], entry] }));
+    const durLabel = minutes < 60
+      ? (lang === "zh" ? `${minutes} 分鐘` : `${minutes} min`)
+      : (lang === "zh" ? `${minutes / 60} 小時` : `${minutes / 60} hr`);
+    showToast(
+      lang === "zh" ? `已將 ${staffName} 設為忙碌中，${start} 起 ${durLabel}` : `${staffName} set busy for ${durLabel} from ${start}`,
+      "warn"
+    );
   };
-  const removeBusy = async (id) => {
-    try {
-      await deleteDoc(doc(db, "busyStatus", id));
-      showToast(lang === "zh" ? "已清除忙碌狀態" : "Busy status cleared", "success");
-    } catch (err) {
-      console.error("removeBusy error:", err);
-      showToast(t("syncError"), "warn");
-    }
+  const removeBusy = (id) => {
+    setBusy((prev) => ({ ...prev, [branchIdx]: prev[branchIdx].filter((b) => b.id !== id) }));
+    showToast(lang === "zh" ? "已清除忙碌狀態" : "Busy status cleared", "success");
   };
 
   /* ───── CONTACT HANDLERS ───── */
-  const updateBranchInfo = async (idx, field, value) => {
-    // optimistic local update for instant UI feedback
+  const updateBranchInfo = (idx, field, value) => {
     setBranchInfo((prev) => prev.map((b) => (b.id === idx ? { ...b, [field]: value } : b)));
-    try {
-      await setDoc(doc(db, "settings", "branchInfo"), { [idx]: { [field]: value } }, { merge: true });
-    } catch (err) {
-      console.error("updateBranchInfo error:", err);
-      showToast(t("syncError"), "warn");
-    }
   };
   const handleMapUpload = async (idx, e) => {
     const file = e.target.files?.[0];
     if (!file) return;
     const dataUrl = await fileToDataUrl(file);
-    if (dataUrl.length > MAX_IMAGE_BYTES) {
-      showToast(t("imageTooLarge"), "warn");
-      setMapImages((prev) => ({ ...prev, [idx]: dataUrl })); // local-only fallback
-      e.target.value = "";
-      return;
-    }
-    try {
-      await setDoc(doc(db, "settings", "mapImages"), { [idx]: dataUrl }, { merge: true });
-      showToast(t("mapUploaded"), "success");
-    } catch (err) {
-      console.error("handleMapUpload error:", err);
-      showToast(t("syncError"), "warn");
-    }
+    setMapImages((prev) => ({ ...prev, [idx]: dataUrl }));
+    showToast(t("mapUploaded"), "success");
     e.target.value = "";
   };
-  const removeMapImage = async (idx) => {
-    try {
-      await setDoc(doc(db, "settings", "mapImages"), { [idx]: null }, { merge: true });
-      showToast(t("mapRemoved"), "success");
-    } catch (err) {
-      console.error("removeMapImage error:", err);
-      showToast(t("syncError"), "warn");
-    }
+  const removeMapImage = (idx) => {
+    setMapImages((prev) => ({ ...prev, [idx]: null }));
+    showToast(t("mapRemoved"), "success");
   };
 
   /* ───── STAFF LIST HANDLERS ───── */
-  const addStaff = async (branch, name) => {
+  const addStaff = (branch, name) => {
     const trimmed = name.trim();
     if (!trimmed) {
       showToast(t("staffNameRequired"), "warn");
@@ -757,26 +535,13 @@ export default function App() {
       showToast(t("staffNameExists"), "warn");
       return false;
     }
-    const updated = [...staffList[branch], trimmed];
-    try {
-      await setDoc(doc(db, "settings", "staffList"), { [branch]: updated }, { merge: true });
-      showToast(t("staffAdded"), "success");
-      return true;
-    } catch (err) {
-      console.error("addStaff error:", err);
-      showToast(t("syncError"), "warn");
-      return false;
-    }
+    setStaffList((prev) => ({ ...prev, [branch]: [...prev[branch], trimmed] }));
+    showToast(t("staffAdded"), "success");
+    return true;
   };
-  const removeStaff = async (branch, name) => {
-    const updated = staffList[branch].filter((s) => s !== name);
-    try {
-      await setDoc(doc(db, "settings", "staffList"), { [branch]: updated }, { merge: true });
-      showToast(t("staffRemoved"), "success");
-    } catch (err) {
-      console.error("removeStaff error:", err);
-      showToast(t("syncError"), "warn");
-    }
+  const removeStaff = (branch, name) => {
+    setStaffList((prev) => ({ ...prev, [branch]: prev[branch].filter((s) => s !== name) }));
+    showToast(t("staffRemoved"), "success");
   };
 
   /* ════════════ NOT LOGGED IN → LOGIN SCREEN ════════════ */
@@ -879,7 +644,7 @@ export default function App() {
           {page === "services" && (
             <ServicesPage
               t={t} lang={lang} user={user}
-              services={services} gallery={galleryAll}
+              services={services} gallery={gallery}
               openNewService={openNewService} openEditService={openEditService} deleteService={deleteService}
               handleGalleryUpload={handleGalleryUpload} deleteGalleryImg={deleteGalleryImg}
             />
@@ -1283,7 +1048,7 @@ function BookingModal({ t, lang, user, mode, data, services, onClose, onSave, on
   const readOnly = mode === "view";
 
   const title = mode === "new" ? t("newAppointment") : mode === "edit" ? t("editAppointment") : t("appointmentDetail");
-  const svc = services.find((s) => s.id === form.serviceId);
+  const svc = services.find((s) => s.id === Number(form.serviceId)) || services.find((s) => s.id === form.serviceId);
 
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={onClose}>
@@ -1312,7 +1077,7 @@ function BookingModal({ t, lang, user, mode, data, services, onClose, onSave, on
               <input value={form.phone} onChange={(e) => set("phone", e.target.value)} className="input" placeholder="+63 ..." />
             </Field>
             <Field label={`${t("service")} *`}>
-              <select value={form.serviceId} onChange={(e) => set("serviceId", e.target.value)} className="input">
+              <select value={form.serviceId} onChange={(e) => set("serviceId", Number(e.target.value))} className="input">
                 <option value="">{t("selectService")}</option>
                 {SERVICE_CATEGORIES.map((cat) => {
                   const items = services.filter((s) => s.cat === cat.id);
@@ -1678,8 +1443,8 @@ function StaffPage({ t, lang, branchInfo, staffList, addStaff, removeStaff }) {
 function StaffBranchCard({ t, lang, branch, idx, names, addStaff, removeStaff }) {
   const [name, setName] = useState("");
 
-  const handleAdd = async () => {
-    const ok = await addStaff(idx, name);
+  const handleAdd = () => {
+    const ok = addStaff(idx, name);
     if (ok) setName("");
   };
 
@@ -1743,40 +1508,39 @@ function FirestoreTestPage({ t, lang, showToast }) {
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
 
-  // Real-time listener — list updates instantly on any change, no manual refetch needed.
+  const fetchMessages = async () => {
+    setLoading(true);
+    try {
+      const q = query(collection(db, "messages"), orderBy("createdAt", "desc"));
+      const snap = await getDocs(q);
+      setMessages(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+    } catch (err) {
+      console.error(err);
+      showToast(t("fetchError"), "warn");
+    } finally {
+      setLoading(false);
+    }
+  };
+
   useEffect(() => {
-    const q = query(collection(db, "messages"), orderBy("createdAt", "desc"));
-    const unsubscribe = onSnapshot(
-      q,
-      (snap) => {
-        setMessages(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-        setLoading(false);
-      },
-      (err) => {
-        console.error(err);
-        showToast(t("fetchError"), "warn");
-        setLoading(false);
-      }
-    );
-    return () => unsubscribe();
+    fetchMessages();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleSend = async () => {
-    if (sending) return; // prevent double-submit
     if (!text.trim()) {
       showToast(t("messageEmpty"), "warn");
       return;
     }
-    const value = text.trim();
     setSending(true);
     try {
       await addDoc(collection(db, "messages"), {
-        text: value,
+        text: text.trim(),
         createdAt: serverTimestamp(),
       });
       setText("");
       showToast(t("messageSaved"), "success");
+      await fetchMessages();
     } catch (err) {
       console.error(err);
       showToast(t("messageError"), "warn");
@@ -1823,13 +1587,17 @@ function FirestoreTestPage({ t, lang, showToast }) {
         </div>
       </div>
 
-      {/* Current messages — synced live from Firestore */}
+      {/* Current messages */}
       <div className="bg-white border border-stone-200 rounded-xl p-5 shadow-sm">
         <div className="flex items-center justify-between pb-2.5 border-b border-stone-100 mb-3">
           <h3 className="font-display text-lg font-light text-stone-800">{t("allMessages")}</h3>
-          <span className="flex items-center gap-1.5 text-xs font-medium text-stone-400">
-            <RefreshCw size={13} className={loading ? "animate-spin" : ""} /> {loading ? t("loadingMessages") : t("liveSync")}
-          </span>
+          <button
+            type="button"
+            onClick={fetchMessages}
+            className="flex items-center gap-1.5 text-xs font-medium text-stone-400 hover:text-rose-400 transition"
+          >
+            <RefreshCw size={13} /> {t("refresh")}
+          </button>
         </div>
         {loading ? (
           <div className="text-sm text-stone-400 py-3">{t("loadingMessages")}</div>
