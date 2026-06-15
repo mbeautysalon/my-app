@@ -42,17 +42,10 @@ const LOGO_ICON_URL =
    DATA / CONSTANTS
 ════════════════════════════════════════════════════ */
 
-/* ════════════════════════════════════════════════════
-   DEFAULT ADMIN SEED — only used if Firestore "accounts" collection is empty.
-   Actual accounts are stored in Firestore and managed by the admin in the backend.
-════════════════════════════════════════════════════ */
-const DEFAULT_ADMIN = {
-  username: "m_beauty_admin",
-  password: "Mb@uty2025!",
-  role: "admin",
-  displayName: "Owner",
-  canApprove: true,
-};
+const USERS = [
+  { username: "owner", password: "owner123", role: "admin", name: { zh: "Owner（管理員）", en: "Owner (Admin)" } },
+  { username: "staff", password: "staff123", role: "staff", name: { zh: "現場技師", en: "Staff" } },
+];
 
 const BRANCHES = [
   {
@@ -334,66 +327,6 @@ const T = {
 
   roleAdmin: { zh: "管理員", en: "Admin" },
   roleStaff: { zh: "現場端", en: "Staff" },
-
-  /* Accounts page */
-  navAccounts: { zh: "帳號管理", en: "Account Management" },
-  accountsTitle: { zh: "帳號<span class='text-rose-400'>管理</span>", en: "Account <span class='text-rose-400'>Management</span>" },
-  accountsDesc: { zh: "新增、刪除或修改員工帳號。帳號資料儲存於 Firestore。", en: "Add, remove or edit staff accounts. All data is stored in Firestore." },
-  accountUsername: { zh: "帳號", en: "Username" },
-  accountPassword: { zh: "密碼", en: "Password" },
-  accountDisplayName: { zh: "顯示名稱", en: "Display Name" },
-  accountRole: { zh: "角色", en: "Role" },
-  accountCanApprove: { zh: "可審核預約", en: "Can Approve Bookings" },
-  addAccount: { zh: "新增帳號", en: "Add Account" },
-  saveAccount: { zh: "儲存", en: "Save" },
-  deleteAccount: { zh: "刪除", en: "Delete" },
-  confirmDeleteAccount: { zh: "確定要刪除此帳號嗎？刪除後無法復原。", en: "Delete this account? This cannot be undone." },
-  accountSaved: { zh: "帳號已儲存", en: "Account saved" },
-  accountDeleted: { zh: "帳號已刪除", en: "Account deleted" },
-  accountUsernameRequired: { zh: "請輸入帳號", en: "Please enter a username" },
-  accountUsernameExists: { zh: "此帳號已存在", en: "Username already taken" },
-  accountPasswordRequired: { zh: "請輸入密碼", en: "Please enter a password" },
-  noAccounts: { zh: "尚無帳號", en: "No accounts yet" },
-
-  /* Home page intro */
-  homeTitle: { zh: "歡迎來到 M Beauty Salon & Nails", en: "Welcome to M Beauty Salon & Nails" },
-  homeIntro: { zh: "我們提供專業美髮、美甲、睫毛、紋繡等服務。\n兩個分店分別位於 Cebu City 的 Salinas Premier（Lahug）和 Emall 2F。\n歡迎預約或直接到店洽詢！", en: "We offer professional hair, nail, eyelash, microblading and more.\nOur two branches are located at Salinas Premier (Lahug) and Emall 2F in Cebu City.\nWalk-ins welcome — book ahead for your preferred time!" },
-  editIntro: { zh: "編輯介紹詞", en: "Edit Introduction" },
-  saveIntro: { zh: "儲存介紹詞", en: "Save Introduction" },
-  savedIntro: { zh: "介紹詞已儲存", en: "Introduction saved" },
-
-  /* Guest booking form */
-  navBookNow: { zh: "立即預約", en: "Book Now" },
-  bookingFormTitle: { zh: "預約<span class='text-rose-400'>表單</span>", en: "Book an <span class='text-rose-400'>Appointment</span>" },
-  bookingFormDesc: { zh: "填寫以下資料提交預約，我們確認後會與您聯繫。", en: "Fill in the form below and we'll confirm your booking shortly." },
-  guestName: { zh: "姓名 *", en: "Name *" },
-  guestPhone: { zh: "電話號碼 *", en: "Phone Number *" },
-  guestSocial: { zh: "FB / IG 帳號", en: "FB / IG Account" },
-  guestBranch: { zh: "分店 *", en: "Branch *" },
-  guestDate: { zh: "預約日期 *", en: "Date *" },
-  guestTime: { zh: "預約時段 *", en: "Time Slot *" },
-  guestContactVia: { zh: "您從哪裡找到我們？", en: "Where did you contact us?" },
-  guestService: { zh: "預計服務項目", en: "Intended Service" },
-  guestPayment: { zh: "付款方式", en: "Payment Method" },
-  guestSubmit: { zh: "送出預約", en: "Submit Booking" },
-  guestSubmitting: { zh: "送出中...", en: "Submitting..." },
-  guestSubmitSuccess: { zh: "✅ 預約已送出！我們確認後會儘速與您聯繫。", en: "✅ Booking submitted! We'll contact you to confirm shortly." },
-  guestSubmitError: { zh: "送出失敗，請稍後再試。", en: "Submission failed — please try again." },
-  guestFillRequired: { zh: "請填寫所有必填欄位（*）", en: "Please fill in all required fields (*)." },
-
-  /* Pending bookings */
-  navPending: { zh: "待審核預約", en: "Pending Approvals" },
-  pendingTitle: { zh: "待審核<span class='text-rose-400'>預約</span>", en: "Pending <span class='text-rose-400'>Approvals</span>" },
-  pendingEmpty: { zh: "目前沒有待審核的預約", en: "No pending bookings" },
-  approveBtn: { zh: "✅ 同意", en: "✅ Approve" },
-  rejectBtn: { zh: "❌ 拒絕", en: "❌ Reject" },
-  approving: { zh: "審核中...", en: "Processing..." },
-  approvedOk: { zh: "預約已通過並移入正式預約！", en: "Booking approved and added to calendar!" },
-  rejectedOk: { zh: "預約已拒絕", en: "Booking rejected" },
-  allowStaffApprove: { zh: "授權現場端審核預約", en: "Allow Staff to Approve Bookings" },
-  allowStaffApproveDesc: { zh: "開啟後，現場端帳號（canApprove = true）也可審核待審核預約。", en: "When enabled, staff accounts with canApprove = true can also approve pending bookings." },
-  staffApproveEnabled: { zh: "已授權現場端可審核", en: "Staff approval enabled" },
-  staffApproveDisabled: { zh: "已撤銷現場端審核權限", en: "Staff approval disabled" },
 };
 
 /* ════════════════════════════════════════════════════
@@ -430,35 +363,29 @@ function fileToDataUrl(file) {
 export default function App() {
   const [lang, setLang] = useState("zh");
   const [user, setUser] = useState(null);
-  const [accounts, setAccounts] = useState([]);       // loaded from Firestore "accounts"
-  const [page, setPage] = useState("home");
+  const [page, setPage] = useState("calendar");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [toast, setToast] = useState(null);
 
-  // data — synced with Firestore in real time
+  // data — synced with Firestore in real time (see useEffect hooks below)
   const [bookings, setBookings] = useState([]);
-  const [pendingBookings, setPendingBookings] = useState([]);
   const [services, setServices] = useState([]);
   const [gallery, setGallery] = useState([]);
-  const [localGallery, setLocalGallery] = useState([]);
+  const [localGallery, setLocalGallery] = useState([]); // oversized images, local-only (not synced)
   const [branchInfo, setBranchInfo] = useState(BRANCHES);
-  const [mapImages, setMapImages] = useState({ 0: null, 1: null });
-  const [staffList, setStaffList] = useState(INITIAL_STAFF);
-
-  // site settings
-  const [introText, setIntroText] = useState({ zh: "", en: "" });
-  const [staffApproveEnabled, setStaffApproveEnabled] = useState(false);
+  const [mapImages, setMapImages] = useState({ 0: null, 1: null }); // dataURL per branch
+  const [staffList, setStaffList] = useState(INITIAL_STAFF); // {0:[names], 1:[names]}
 
   // calendar
   const [branchIdx, setBranchIdx] = useState(0);
   const [weekOffset, setWeekOffset] = useState(0);
 
-  // busy state per branch
+  // busy state per branch — array of {id, staff, start, until, dateKey}
   const [busy, setBusy] = useState({ 0: [], 1: [] });
 
   // modals
-  const [bookingModal, setBookingModal] = useState(null);
-  const [serviceModal, setServiceModal] = useState(null);
+  const [bookingModal, setBookingModal] = useState(null); // {mode:'new'|'edit'|'view', data}
+  const [serviceModal, setServiceModal] = useState(null); // {mode:'new'|'edit', data}
 
   const t = (key) => T[key]?.[lang] ?? key;
 
@@ -598,56 +525,9 @@ export default function App() {
     return unsub;
   }, []);
 
-  // accounts — collection "accounts" (seed DEFAULT_ADMIN if empty)
-  useEffect(() => {
-    const unsub = onSnapshot(
-      collection(db, "accounts"),
-      async (snap) => {
-        if (snap.empty) {
-          try {
-            await addDoc(collection(db, "accounts"), DEFAULT_ADMIN);
-          } catch (err) {
-            console.error("accounts seed error:", err);
-          }
-          return;
-        }
-        setAccounts(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-      },
-      (err) => console.error("accounts sync error:", err)
-    );
-    return unsub;
-  }, []);
-
-  // pending bookings — collection "pendingBookings"
-  useEffect(() => {
-    const q = query(collection(db, "pendingBookings"), orderBy("submittedAt", "desc"));
-    const unsub = onSnapshot(
-      q,
-      (snap) => setPendingBookings(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
-      (err) => console.error("pendingBookings sync error:", err)
-    );
-    return unsub;
-  }, []);
-
-  // site settings — doc "settings/site"
-  useEffect(() => {
-    const ref = doc(db, "settings", "site");
-    const unsub = onSnapshot(
-      ref,
-      (snap) => {
-        if (!snap.exists()) return;
-        const data = snap.data();
-        if (data.introZh !== undefined) setIntroText({ zh: data.introZh, en: data.introEn || "" });
-        if (data.staffApproveEnabled !== undefined) setStaffApproveEnabled(data.staffApproveEnabled);
-      },
-      (err) => console.error("siteSettings sync error:", err)
-    );
-    return unsub;
-  }, []);
-
   /* ───── LOGIN HANDLERS ───── */
   const handleLogin = (username, password) => {
-    const found = accounts.find((a) => a.username === username && a.password === password);
+    const found = USERS.find((u) => u.username === username && u.password === password);
     if (found) {
       setUser(found);
       setPage("calendar");
@@ -657,7 +537,7 @@ export default function App() {
   };
   const handleLogout = () => {
     setUser(null);
-    setPage("home");
+    setPage("calendar");
   };
 
   /* ───── BOOKING HANDLERS ───── */
@@ -899,103 +779,9 @@ export default function App() {
     }
   };
 
-  /* ───── ACCOUNT MANAGEMENT HANDLERS ───── */
-  const saveAccount = async (data, editingId) => {
-    const trimmed = { ...data, username: data.username.trim(), displayName: data.displayName.trim() };
-    if (!trimmed.username) { showToast(t("accountUsernameRequired"), "warn"); return false; }
-    if (!trimmed.password) { showToast(t("accountPasswordRequired"), "warn"); return false; }
-    const duplicate = accounts.find((a) => a.username === trimmed.username && a.id !== editingId);
-    if (duplicate) { showToast(t("accountUsernameExists"), "warn"); return false; }
-    try {
-      if (editingId) {
-        await setDoc(doc(db, "accounts", editingId), trimmed);
-      } else {
-        await addDoc(collection(db, "accounts"), trimmed);
-      }
-      showToast(t("accountSaved"), "success");
-      return true;
-    } catch (err) {
-      console.error("saveAccount error:", err);
-      showToast(t("syncError"), "warn");
-      return false;
-    }
-  };
-
-  const deleteAccount = async (id) => {
-    if (!window.confirm(t("confirmDeleteAccount"))) return;
-    try {
-      await deleteDoc(doc(db, "accounts", id));
-      showToast(t("accountDeleted"), "success");
-    } catch (err) {
-      console.error("deleteAccount error:", err);
-      showToast(t("syncError"), "warn");
-    }
-  };
-
-  /* ───── PENDING BOOKING HANDLERS ───── */
-  const approveBooking = async (pb) => {
-    try {
-      const { id, ...rest } = pb;
-      await addDoc(collection(db, "bookings"), {
-        ...rest,
-        approvedAt: serverTimestamp(),
-        approvedBy: user.username,
-      });
-      await deleteDoc(doc(db, "pendingBookings", id));
-      showToast(t("approvedOk"), "success");
-    } catch (err) {
-      console.error("approveBooking error:", err);
-      showToast(t("syncError"), "warn");
-    }
-  };
-
-  const rejectBooking = async (id) => {
-    if (!window.confirm(t("rejectBtn") + "?")) return;
-    try {
-      await deleteDoc(doc(db, "pendingBookings", id));
-      showToast(t("rejectedOk"), "success");
-    } catch (err) {
-      console.error("rejectBooking error:", err);
-      showToast(t("syncError"), "warn");
-    }
-  };
-
-  /* ───── SITE SETTINGS HANDLERS ───── */
-  const saveIntro = async (zh, en) => {
-    try {
-      await setDoc(doc(db, "settings", "site"), { introZh: zh, introEn: en, staffApproveEnabled }, { merge: true });
-      showToast(t("savedIntro"), "success");
-    } catch (err) {
-      console.error("saveIntro error:", err);
-      showToast(t("syncError"), "warn");
-    }
-  };
-
-  const toggleStaffApprove = async () => {
-    const next = !staffApproveEnabled;
-    try {
-      await setDoc(doc(db, "settings", "site"), { staffApproveEnabled: next }, { merge: true });
-      showToast(next ? t("staffApproveEnabled") : t("staffApproveDisabled"), "success");
-    } catch (err) {
-      console.error("toggleStaffApprove error:", err);
-      showToast(t("syncError"), "warn");
-    }
-  };
-
-  // Can current user approve pending bookings?
-  const canApprovePending = user?.role === "admin" || (staffApproveEnabled && user?.canApprove);
-
-  /* ════════════ NOT LOGGED IN → HOME ════════════ */
+  /* ════════════ NOT LOGGED IN → LOGIN SCREEN ════════════ */
   if (!user) {
-    return (
-      <HomePage
-        lang={lang} setLang={setLang} t={t}
-        introText={introText}
-        onLogin={handleLogin}
-        branchInfo={branchInfo}
-        services={services}
-      />
-    );
+    return <LoginScreen lang={lang} setLang={setLang} t={t} onLogin={handleLogin} />;
   }
 
   /* ════════════ LOGGED IN APP ════════════ */
@@ -1057,19 +843,8 @@ export default function App() {
             <SidebarItem icon={<Calendar size={17} />} label={t("navCalendar")} active={page === "calendar"} onClick={() => { setPage("calendar"); setSidebarOpen(false); }} />
             <SidebarItem icon={<Scissors size={17} />} label={t("navServices")} active={page === "services"} onClick={() => { setPage("services"); setSidebarOpen(false); }} />
             <SidebarItem icon={<MapPin size={17} />} label={t("navContact")} active={page === "contact"} onClick={() => { setPage("contact"); setSidebarOpen(false); }} />
-            {canApprovePending && (
-              <SidebarItem
-                icon={<span className="relative"><Eye size={17} />{pendingBookings.length > 0 && <span className="absolute -top-1 -right-1.5 bg-rose-400 text-white text-[9px] font-bold w-3.5 h-3.5 flex items-center justify-center rounded-full">{pendingBookings.length > 9 ? "9+" : pendingBookings.length}</span>}</span>}
-                label={t("navPending")}
-                active={page === "pending"}
-                onClick={() => { setPage("pending"); setSidebarOpen(false); }}
-              />
-            )}
             {user.role === "admin" && (
               <SidebarItem icon={<Users size={17} />} label={t("navStaff")} active={page === "staff"} onClick={() => { setPage("staff"); setSidebarOpen(false); }} />
-            )}
-            {user.role === "admin" && (
-              <SidebarItem icon={<User size={17} />} label={t("navAccounts")} active={page === "accounts"} onClick={() => { setPage("accounts"); setSidebarOpen(false); }} />
             )}
             {user.role === "admin" && (
               <SidebarItem icon={<Database size={17} />} label={t("navFirestore")} active={page === "firestore"} onClick={() => { setPage("firestore"); setSidebarOpen(false); }} />
@@ -1098,7 +873,6 @@ export default function App() {
               addBusy={addBusy} removeBusy={removeBusy}
               staffList={staffList}
               showToast={showToast}
-              introText={introText} saveIntro={saveIntro}
               openNewBooking={openNewBooking} openBookingItem={openBookingItem}
             />
           )}
@@ -1115,14 +889,6 @@ export default function App() {
           )}
           {page === "staff" && user.role === "admin" && (
             <StaffPage t={t} lang={lang} branchInfo={branchInfo} staffList={staffList} addStaff={addStaff} removeStaff={removeStaff} />
-          )}
-          {page === "pending" && canApprovePending && (
-            <PendingPage t={t} lang={lang} pendingBookings={pendingBookings} onApprove={approveBooking} onReject={rejectBooking}
-              isAdmin={user.role === "admin"} staffApproveEnabled={staffApproveEnabled} toggleStaffApprove={toggleStaffApprove}
-            />
-          )}
-          {page === "accounts" && user.role === "admin" && (
-            <AccountsPage t={t} lang={lang} accounts={accounts} onSave={saveAccount} onDelete={deleteAccount} />
           )}
           {page === "firestore" && user.role === "admin" && (
             <FirestoreTestPage t={t} lang={lang} showToast={showToast} />
@@ -1165,247 +931,120 @@ export default function App() {
    LOGIN SCREEN
 ════════════════════════════════════════════════════ */
 
-/* ════════════════════════════════════════════════════
-   HOME PAGE (public — not logged in)
-   Shows: intro text, branch info, guest booking form,
-   and a small login widget in the top-right corner.
-════════════════════════════════════════════════════ */
-
-function HomePage({ lang, setLang, t, introText, onLogin, branchInfo, services }) {
-  const [showLogin, setShowLogin] = useState(false);
+function LoginScreen({ lang, setLang, t, onLogin }) {
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-  const [loginError, setLoginError] = useState("");
-  const [submitted, setSubmitted] = useState(false);
-
-  const displayIntro = introText?.[lang] || T["homeIntro"]?.[lang] || "";
+  const [error, setError] = useState("");
 
   const submit = () => {
     const ok = onLogin(username.trim(), password);
-    if (!ok) setLoginError(t("loginError"));
-    else { setShowLogin(false); setLoginError(""); }
+    if (!ok) setError(t("loginError"));
   };
-  const keyDown = (e) => { if (e.key === "Enter") submit(); };
+
+  const handleKeyDown = (e) => {
+    if (e.key === "Enter") submit();
+  };
+
+  const fillDemo = (u, p) => {
+    setUsername(u);
+    setPassword(p);
+    setError("");
+  };
 
   return (
-    <div className="min-h-screen bg-stone-50" style={{ fontFamily: "'Inter', sans-serif" }}>
+    <div className="min-h-screen bg-stone-50 flex items-center justify-center p-4" style={{ fontFamily: "'Inter', sans-serif" }}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;1,400;1,600&family=Inter:wght@300;400;500;600&display=swap');
         .font-display { font-family: 'Cormorant Garamond', serif; }
       `}</style>
 
-      {/* Top bar */}
-      <div className="fixed top-0 left-0 right-0 z-30 flex items-center justify-between px-5 py-3 bg-stone-900">
-        <div className="flex items-center gap-2">
-          <img src={LOGO_ICON_URL} alt="M Beauty" className="w-8 h-8 rounded-full bg-rose-50 object-contain p-1" />
-          <span className="font-display text-white text-lg italic tracking-wide">M <span className="text-amber-400 not-italic">Beauty</span> Salon & Nails</span>
-        </div>
-        <div className="flex items-center gap-2">
-          <div className="flex items-center gap-1 bg-stone-800 rounded-full p-0.5">
-            <button onClick={() => setLang("zh")} className={`text-xs px-2.5 py-1 rounded-full transition ${lang==="zh" ? "bg-amber-400 text-stone-900 font-medium" : "text-stone-300"}`}>中文</button>
-            <button onClick={() => setLang("en")} className={`text-xs px-2.5 py-1 rounded-full transition ${lang==="en" ? "bg-amber-400 text-stone-900 font-medium" : "text-stone-300"}`}>EN</button>
+      <div className="absolute top-4 right-4 flex items-center gap-1 bg-white border border-stone-200 rounded-full p-1 shadow-sm">
+        <button onClick={() => setLang("zh")} className={`text-xs font-medium px-3 py-1 rounded-full transition ${lang === "zh" ? "bg-rose-400 text-white" : "text-stone-500"}`}>中文</button>
+        <button onClick={() => setLang("en")} className={`text-xs font-medium px-3 py-1 rounded-full transition ${lang === "en" ? "bg-rose-400 text-white" : "text-stone-500"}`}>EN</button>
+      </div>
+
+      <div className="w-full max-w-4xl grid md:grid-cols-2 bg-white rounded-2xl shadow-xl overflow-hidden border border-stone-200">
+        {/* Left: branding & branches */}
+        <div className="bg-stone-900 text-white p-8 md:p-10 flex flex-col justify-between">
+          <div>
+            <div className="inline-block bg-rose-50 rounded-2xl p-3 mb-1 shadow-sm">
+              <img src={LOGO_DATA_URL} alt="M Beauty Salon & Nails" className="w-28 h-28 md:w-32 md:h-32" />
+            </div>
+            <p className="text-stone-400 text-sm mt-2">{t("tagline")}</p>
           </div>
-          <div className="relative">
-            <button
-              type="button"
-              onClick={() => setShowLogin((v) => !v)}
-              className="flex items-center gap-1.5 text-xs font-medium border border-stone-600 text-stone-300 hover:border-amber-400 hover:text-amber-400 px-3 py-1.5 rounded-lg transition"
-            >
-              <Lock size={12} /> {lang === "zh" ? "員工登入" : "Staff Login"}
-            </button>
-            {showLogin && (
-              <div className="absolute top-10 right-0 w-72 bg-white rounded-xl shadow-2xl border border-stone-200 p-4 z-50">
-                <div className="text-sm font-semibold text-stone-700 mb-3">{t("loginTitle")}</div>
-                <div className="space-y-2">
-                  <input
-                    value={username}
-                    onChange={(e) => setUsername(e.target.value)}
-                    onKeyDown={keyDown}
-                    placeholder={t("username")}
-                    className="w-full px-3 py-2 text-sm border border-stone-200 rounded-lg bg-stone-50 focus:outline-none focus:border-rose-400 transition"
-                  />
-                  <input
-                    type="password"
-                    value={password}
-                    onChange={(e) => setPassword(e.target.value)}
-                    onKeyDown={keyDown}
-                    placeholder={t("password")}
-                    className="w-full px-3 py-2 text-sm border border-stone-200 rounded-lg bg-stone-50 focus:outline-none focus:border-rose-400 transition"
-                  />
-                  {loginError && <div className="text-xs text-rose-500">{loginError}</div>}
-                  <button type="button" onClick={submit} className="w-full bg-rose-400 hover:bg-rose-500 text-white text-sm font-medium py-2 rounded-lg transition">
-                    {t("loginBtn")}
-                  </button>
+
+          <div className="mt-10 space-y-4">
+            <div className="text-[11px] font-semibold tracking-widest text-amber-400 uppercase">{t("ourBranches")}</div>
+            {BRANCHES.map((b) => (
+              <div key={b.id} className="flex items-start gap-3 bg-stone-800 rounded-xl p-4">
+                <span className={`mt-1 w-2.5 h-2.5 rounded-full ${b.dot} flex-shrink-0`} />
+                <div>
+                  <div className="font-medium text-sm text-white">{lang === "zh" ? b.nameZh : b.nameEn} <span className="text-stone-400">({b.sub})</span></div>
+                  <div className="text-xs text-stone-400 mt-1 flex items-center gap-1"><MapPin size={12} />{b.addr}</div>
                 </div>
               </div>
-            )}
+            ))}
           </div>
-        </div>
-      </div>
 
-      <div className="pt-20 max-w-4xl mx-auto px-5 pb-16">
-        {/* Hero / intro */}
-        <div className="text-center py-10">
-          <div className="inline-block bg-white rounded-2xl p-4 shadow-sm mb-5 border border-stone-100">
-            <img src={LOGO_DATA_URL} alt="M Beauty Salon & Nails" className="w-36 h-36 mx-auto" />
-          </div>
-          <h1 className="font-display text-3xl md:text-4xl font-light text-stone-800 mb-4">{t("homeTitle")}</h1>
-          <p className="text-stone-500 text-sm leading-relaxed whitespace-pre-line max-w-xl mx-auto">
-            {displayIntro}
-          </p>
+          <div className="mt-10 text-xs text-stone-500">© M Beauty Salon & Nails · Cebu City, PH</div>
         </div>
 
-        {/* Branch info */}
-        <div className="grid md:grid-cols-2 gap-4 mb-10">
-          {branchInfo.map((b) => (
-            <div key={b.id} className="bg-white rounded-xl border border-stone-200 p-5 shadow-sm">
-              <div className="flex items-center gap-2 mb-3">
-                <span className={`w-2.5 h-2.5 rounded-full ${b.dot}`} />
-                <span className="font-display text-lg font-light text-stone-800">{lang==="zh" ? b.nameZh : b.nameEn}</span>
-                <span className="text-stone-400 text-sm">({b.sub})</span>
-              </div>
-              <div className="text-xs text-stone-500 space-y-1">
-                <div className="flex gap-1.5"><MapPin size={12} className="text-rose-400 flex-shrink-0 mt-0.5" />{b.addr}</div>
-                <div className="flex gap-1.5"><Phone size={12} className="text-rose-400 flex-shrink-0 mt-0.5" />{b.phone}</div>
-                <div className="flex gap-1.5"><Clock size={12} className="text-rose-400 flex-shrink-0 mt-0.5" />{b.hours}</div>
+        {/* Right: login form */}
+        <div className="p-8 md:p-10 flex flex-col justify-center">
+          <h1 className="font-display text-3xl font-light text-stone-800 mb-1">{t("loginTitle")}</h1>
+          <p className="text-sm text-stone-400 mb-6">{t("loginSub")}</p>
+
+          <div className="space-y-4">
+            <div>
+              <label className="text-xs font-medium text-stone-500 mb-1 block">{t("username")}</label>
+              <div className="relative">
+                <User size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" />
+                <input
+                  value={username}
+                  onChange={(e) => setUsername(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  className="w-full pl-9 pr-3 py-2.5 rounded-lg border border-stone-200 bg-stone-50 text-sm focus:outline-none focus:border-rose-400 focus:bg-white transition"
+                  placeholder="owner / staff"
+                />
               </div>
             </div>
-          ))}
-        </div>
+            <div>
+              <label className="text-xs font-medium text-stone-500 mb-1 block">{t("password")}</label>
+              <div className="relative">
+                <Lock size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" />
+                <input
+                  type="password"
+                  value={password}
+                  onChange={(e) => setPassword(e.target.value)}
+                  onKeyDown={handleKeyDown}
+                  className="w-full pl-9 pr-3 py-2.5 rounded-lg border border-stone-200 bg-stone-50 text-sm focus:outline-none focus:border-rose-400 focus:bg-white transition"
+                  placeholder="••••••••"
+                />
+              </div>
+            </div>
 
-        {/* Guest booking form */}
-        {submitted ? (
-          <div className="bg-green-50 border border-green-200 rounded-xl p-8 text-center text-green-700 text-sm font-medium">
-            {t("guestSubmitSuccess")}
-            <button type="button" onClick={() => setSubmitted(false)} className="mt-4 block mx-auto text-xs text-stone-400 underline">
-              {lang==="zh" ? "再填一份" : "Submit another"}
+            {error && <div className="text-xs text-rose-500 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2">{error}</div>}
+
+            <button type="button" onClick={submit} className="w-full bg-rose-400 hover:bg-rose-500 text-white font-medium text-sm py-2.5 rounded-lg transition">
+              {t("loginBtn")}
             </button>
           </div>
-        ) : (
-          <GuestBookingForm t={t} lang={lang} services={services} branchInfo={branchInfo} onSubmitted={() => setSubmitted(true)} />
-        )}
+
+          <div className="mt-7 pt-5 border-t border-stone-100">
+            <div className="text-[11px] font-semibold tracking-widest text-stone-400 uppercase mb-2">{t("demoAccounts")}</div>
+            <div className="space-y-2">
+              <button type="button" onClick={() => fillDemo("owner", "owner123")} className="w-full flex items-center justify-between text-left bg-stone-50 hover:bg-rose-50 border border-stone-200 hover:border-rose-200 rounded-lg px-3 py-2 transition">
+                <span className="text-xs font-medium text-stone-600">{t("ownerAcc")}</span>
+                <span className="text-[11px] text-stone-400">owner / owner123</span>
+              </button>
+              <button type="button" onClick={() => fillDemo("staff", "staff123")} className="w-full flex items-center justify-between text-left bg-stone-50 hover:bg-amber-50 border border-stone-200 hover:border-amber-200 rounded-lg px-3 py-2 transition">
+                <span className="text-xs font-medium text-stone-600">{t("staffAcc")}</span>
+                <span className="text-[11px] text-stone-400">staff / staff123</span>
+              </button>
+            </div>
+          </div>
+        </div>
       </div>
-    </div>
-  );
-}
-
-/* ════════════════════════════════════════════════════
-   GUEST BOOKING FORM (no login required)
-════════════════════════════════════════════════════ */
-
-const BUSINESS_HOURS = [
-  "09:00","09:30","10:00","10:30","11:00","11:30",
-  "12:00","12:30","13:00","13:30","14:00","14:30",
-  "15:00","15:30","16:00","16:30","17:00","17:30",
-  "18:00","18:30","19:00","19:30","20:00","20:30",
-];
-
-function GuestBookingForm({ t, lang, services, branchInfo, onSubmitted }) {
-  const [form, setForm] = useState({
-    name: "", phone: "", social: "",
-    branch: "0", date: "", time: "",
-    contactVia: "", serviceNote: "", payment: "",
-  });
-  const [submitting, setSubmitting] = useState(false);
-  const [error, setError] = useState("");
-  const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
-
-  const handleSubmit = async () => {
-    if (!form.name.trim() || !form.phone.trim() || !form.date || !form.time) {
-      setError(t("guestFillRequired")); return;
-    }
-    setError("");
-    setSubmitting(true);
-    try {
-      await addDoc(collection(db, "pendingBookings"), {
-        ...form,
-        branch: Number(form.branch),
-        submittedAt: serverTimestamp(),
-        status: "pending",
-      });
-      onSubmitted();
-    } catch (err) {
-      console.error("guest submit error:", err);
-      setError(t("guestSubmitError"));
-    } finally {
-      setSubmitting(false);
-    }
-  };
-
-  const contactOptions = ["FB", "IG", "LINE", lang==="zh" ? "電話" : "Phone number"];
-  const paymentOptions = ["Cash", "GCash", "Credit Card", lang==="zh" ? "禮券 / Gift Check" : "Voucher / Gift Check", lang==="zh" ? "其他" : "Other"];
-
-  return (
-    <div className="bg-white rounded-xl border border-stone-200 shadow-sm p-6">
-      <h2 className="font-display text-2xl font-light text-stone-800 mb-1"
-        dangerouslySetInnerHTML={{ __html: t("bookingFormTitle") }} />
-      <p className="text-sm text-stone-400 mb-5">{t("bookingFormDesc")}</p>
-
-      <div className="grid sm:grid-cols-2 gap-4">
-        <GField label={t("guestName")}>
-          <input value={form.name} onChange={(e) => set("name", e.target.value)} className="ginput" placeholder="Maria Santos" />
-        </GField>
-        <GField label={t("guestPhone")}>
-          <input value={form.phone} onChange={(e) => set("phone", e.target.value)} className="ginput" placeholder="+63 9XX XXX XXXX" />
-        </GField>
-        <GField label={t("guestSocial")}>
-          <input value={form.social} onChange={(e) => set("social", e.target.value)} className="ginput" placeholder="@username" />
-        </GField>
-        <GField label={t("guestBranch")}>
-          <select value={form.branch} onChange={(e) => set("branch", e.target.value)} className="ginput">
-            {branchInfo.map((b) => (
-              <option key={b.id} value={String(b.id)}>{lang==="zh" ? b.nameZh : b.nameEn} ({b.sub})</option>
-            ))}
-          </select>
-        </GField>
-        <GField label={t("guestDate")}>
-          <input type="date" value={form.date} onChange={(e) => set("date", e.target.value)} className="ginput"
-            min={new Date().toISOString().slice(0,10)} />
-        </GField>
-        <GField label={t("guestTime")}>
-          <select value={form.time} onChange={(e) => set("time", e.target.value)} className="ginput">
-            <option value="">—</option>
-            {BUSINESS_HOURS.map((h) => <option key={h} value={h}>{h}</option>)}
-          </select>
-        </GField>
-        <GField label={t("guestContactVia")}>
-          <select value={form.contactVia} onChange={(e) => set("contactVia", e.target.value)} className="ginput">
-            <option value="">—</option>
-            {contactOptions.map((o) => <option key={o} value={o}>{o}</option>)}
-          </select>
-        </GField>
-        <GField label={t("guestPayment")}>
-          <select value={form.payment} onChange={(e) => set("payment", e.target.value)} className="ginput">
-            <option value="">—</option>
-            {paymentOptions.map((o) => <option key={o} value={o}>{o}</option>)}
-          </select>
-        </GField>
-        <GField label={t("guestService")} full>
-          <textarea value={form.serviceNote} onChange={(e) => set("serviceNote", e.target.value)} rows={3}
-            className="ginput resize-none" placeholder={lang==="zh" ? "例如：洗剪吹、凝膠美甲…" : "e.g. Wash & Cut, Gel Nails…"} />
-        </GField>
-      </div>
-
-      {error && <div className="text-xs text-rose-500 mt-3">{error}</div>}
-
-      <button type="button" onClick={handleSubmit} disabled={submitting}
-        className="mt-5 w-full bg-rose-400 hover:bg-rose-500 disabled:opacity-60 text-white font-medium text-sm py-3 rounded-lg transition">
-        {submitting ? t("guestSubmitting") : t("guestSubmit")}
-      </button>
-
-      <style>{`
-        .ginput { width:100%; padding:9px 12px; border:1px solid #E7E5E4; border-radius:8px; font-size:13px; background:#FAFAF9; outline:none; transition:border-color .15s; }
-        .ginput:focus { border-color:#FB7185; background:white; }
-      `}</style>
-    </div>
-  );
-}
-
-function GField({ label, children, full }) {
-  return (
-    <div className={`flex flex-col gap-1.5${full ? " sm:col-span-2" : ""}`}>
-      <label className="text-xs font-medium text-stone-500">{label}</label>
-      {children}
     </div>
   );
 }
@@ -1433,8 +1072,7 @@ function SidebarItem({ icon, label, active, onClick }) {
 
 function CalendarPage({
   t, lang, user, branchInfo, branchIdx, setBranchIdx, weekOffset, setWeekOffset,
-  bookings, services, busyList, addBusy, removeBusy, staffList, showToast,
-  introText, saveIntro, openNewBooking, openBookingItem,
+  bookings, services, busyList, addBusy, removeBusy, staffList, showToast, openNewBooking, openBookingItem,
 }) {
   const days = useMemo(() => getWeekDates(weekOffset), [weekOffset]);
   const todayKey = todayStr();
@@ -1470,14 +1108,11 @@ function CalendarPage({
         <h1 className="font-display text-2xl md:text-3xl font-light text-stone-800">
           {lang === "zh" ? <>預約<span className="text-rose-400">行事曆</span></> : <>Appointment <span className="text-rose-400">Calendar</span></>}
         </h1>
-        <div className="flex items-center gap-2 flex-wrap">
-          {user.role === "admin" && <IntroEditor t={t} lang={lang} introText={introText} onSave={saveIntro} />}
-          {user.role === "admin" && (
-            <button onClick={() => openNewBooking()} className="flex items-center gap-1.5 bg-rose-400 hover:bg-rose-500 text-white text-sm font-medium px-4 py-2 rounded-lg transition">
-              <Plus size={16} /> {t("newAppointment")}
-            </button>
-          )}
-        </div>
+        {user.role === "admin" && (
+          <button onClick={() => openNewBooking()} className="flex items-center gap-1.5 bg-rose-400 hover:bg-rose-500 text-white text-sm font-medium px-4 py-2 rounded-lg transition">
+            <Plus size={16} /> {t("newAppointment")}
+          </button>
+        )}
       </div>
 
       {/* Branch tabs */}
@@ -2101,236 +1736,6 @@ function StaffBranchCard({ t, lang, branch, idx, names, addStaff, removeStaff })
 /* ════════════════════════════════════════════════════
    FIRESTORE TEST PAGE (admin only)
 ════════════════════════════════════════════════════ */
-
-/* ════════════════════════════════════════════════════
-   PENDING BOOKINGS PAGE
-════════════════════════════════════════════════════ */
-
-function PendingPage({ t, lang, pendingBookings, onApprove, onReject, isAdmin, staffApproveEnabled, toggleStaffApprove }) {
-  const [processing, setProcessing] = useState(null);
-
-  const approve = async (pb) => {
-    setProcessing(pb.id);
-    await onApprove(pb);
-    setProcessing(null);
-  };
-  const reject = async (id) => {
-    setProcessing(id);
-    await onReject(id);
-    setProcessing(null);
-  };
-
-  const BRANCH_NAMES = { 0: "Lahug (Salinas Premier)", 1: "Emall (2nd Floor)" };
-
-  return (
-    <div>
-      <h1 className="font-display text-2xl md:text-3xl font-light text-stone-800 mb-2"
-        dangerouslySetInnerHTML={{ __html: t("pendingTitle") }} />
-
-      {/* Admin-only toggle for staff approval permission */}
-      {isAdmin && (
-        <div className="flex items-center justify-between bg-white border border-stone-200 rounded-xl px-4 py-3 mb-5 shadow-sm">
-          <div>
-            <div className="text-sm font-medium text-stone-700">{t("allowStaffApprove")}</div>
-            <div className="text-xs text-stone-400 mt-0.5">{t("allowStaffApproveDesc")}</div>
-          </div>
-          <button
-            type="button"
-            onClick={toggleStaffApprove}
-            className={`relative inline-flex w-12 h-6 rounded-full transition ${staffApproveEnabled ? "bg-rose-400" : "bg-stone-200"}`}
-          >
-            <span className={`absolute top-1 w-4 h-4 bg-white rounded-full shadow transition-transform ${staffApproveEnabled ? "translate-x-7" : "translate-x-1"}`} />
-          </button>
-        </div>
-      )}
-
-      {pendingBookings.length === 0 ? (
-        <div className="bg-white border border-stone-200 rounded-xl p-8 text-center text-stone-400 text-sm shadow-sm">
-          {t("pendingEmpty")}
-        </div>
-      ) : (
-        <div className="space-y-3">
-          {pendingBookings.map((pb) => (
-            <div key={pb.id} className="bg-white border border-stone-200 rounded-xl p-4 shadow-sm">
-              <div className="flex items-start justify-between gap-3 flex-wrap">
-                <div className="min-w-0 flex-1">
-                  <div className="font-semibold text-stone-800 text-sm">{pb.name}</div>
-                  <div className="text-xs text-stone-400 mt-0.5">
-                    {BRANCH_NAMES[pb.branch]} · {pb.date} {pb.time}
-                  </div>
-                  <div className="grid sm:grid-cols-2 gap-x-6 gap-y-0.5 mt-2">
-                    {[
-                      [t("phone"), pb.phone],
-                      ["FB/IG", pb.social],
-                      [t("guestContactVia"), pb.contactVia],
-                      [t("guestPayment"), pb.payment],
-                      [t("guestService"), pb.serviceNote],
-                    ].filter(([,v]) => v).map(([label, val]) => (
-                      <div key={label} className="text-xs text-stone-600">
-                        <span className="font-medium text-stone-400">{label}: </span>{val}
-                      </div>
-                    ))}
-                  </div>
-                </div>
-                <div className="flex gap-2 flex-shrink-0">
-                  <button
-                    type="button"
-                    disabled={processing === pb.id}
-                    onClick={() => approve(pb)}
-                    className="text-xs font-medium bg-green-100 hover:bg-green-200 text-green-700 px-3 py-1.5 rounded-lg transition disabled:opacity-60"
-                  >
-                    {processing === pb.id ? t("approving") : t("approveBtn")}
-                  </button>
-                  <button
-                    type="button"
-                    disabled={processing === pb.id}
-                    onClick={() => reject(pb.id)}
-                    className="text-xs font-medium bg-rose-50 hover:bg-rose-100 text-rose-500 px-3 py-1.5 rounded-lg transition disabled:opacity-60"
-                  >
-                    {t("rejectBtn")}
-                  </button>
-                </div>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-/* ════════════════════════════════════════════════════
-   ACCOUNTS PAGE (admin only)
-════════════════════════════════════════════════════ */
-
-function AccountsPage({ t, lang, accounts, onSave, onDelete }) {
-  const [editing, setEditing] = useState(null);
-  const [form, setForm] = useState({ username: "", password: "", displayName: "", role: "staff", canApprove: false });
-  const setF = (k, v) => setForm((f) => ({ ...f, [k]: v }));
-
-  const openNew = () => {
-    setEditing("new");
-    setForm({ username: "", password: "", displayName: "", role: "staff", canApprove: false });
-  };
-  const openEdit = (a) => {
-    setEditing(a.id);
-    setForm({ username: a.username, password: a.password, displayName: a.displayName || "", role: a.role, canApprove: !!a.canApprove });
-  };
-  const save = async () => {
-    const ok = await onSave(form, editing === "new" ? null : editing);
-    if (ok) setEditing(null);
-  };
-
-  return (
-    <div>
-      <h1 className="font-display text-2xl md:text-3xl font-light text-stone-800 mb-5"
-        dangerouslySetInnerHTML={{ __html: t("accountsTitle") }} />
-
-      {/* Add button */}
-      <div className="flex justify-end mb-4">
-        <button type="button" onClick={openNew} className="flex items-center gap-1.5 bg-rose-400 hover:bg-rose-500 text-white text-sm font-medium px-4 py-2 rounded-lg transition">
-          <Plus size={15} /> {t("addAccount")}
-        </button>
-      </div>
-
-      {/* Inline form */}
-      {editing && (
-        <div className="bg-white border border-rose-200 rounded-xl p-5 mb-5 shadow-sm">
-          <div className="text-sm font-semibold text-stone-700 mb-4">{editing === "new" ? t("addAccount") : t("saveAccount")}</div>
-          <div className="grid sm:grid-cols-2 gap-4">
-            <Field label={t("accountUsername")}>
-              <input value={form.username} onChange={(e) => setF("username", e.target.value)} className="input" disabled={editing !== "new"} />
-            </Field>
-            <Field label={t("accountPassword")}>
-              <input value={form.password} onChange={(e) => setF("password", e.target.value)} className="input" type="text" />
-            </Field>
-            <Field label={t("accountDisplayName")}>
-              <input value={form.displayName} onChange={(e) => setF("displayName", e.target.value)} className="input" />
-            </Field>
-            <Field label={t("accountRole")}>
-              <select value={form.role} onChange={(e) => setF("role", e.target.value)} className="input">
-                <option value="admin">{t("roleAdmin")}</option>
-                <option value="staff">{t("roleStaff")}</option>
-              </select>
-            </Field>
-          </div>
-          <label className="flex items-center gap-2 mt-3 cursor-pointer">
-            <input type="checkbox" checked={form.canApprove} onChange={(e) => setF("canApprove", e.target.checked)} className="w-4 h-4 accent-rose-400" />
-            <span className="text-sm text-stone-600">{t("accountCanApprove")}</span>
-          </label>
-          <div className="flex gap-2 mt-4">
-            <button type="button" onClick={save} className="bg-rose-400 hover:bg-rose-500 text-white text-sm font-medium px-4 py-2 rounded-lg transition">{t("saveAccount")}</button>
-            <button type="button" onClick={() => setEditing(null)} className="text-sm text-stone-500 border border-stone-200 px-4 py-2 rounded-lg transition">{t("cancel")}</button>
-          </div>
-          <style>{`.input { padding:9px 12px; border:1px solid #E7E5E4; border-radius:8px; font-size:13px; background:#FAFAF9; outline:none; width:100%; transition:border-color .15s; } .input:focus { border-color:#FB7185; background:white; } .input:disabled { opacity:0.5; cursor:not-allowed; }`}</style>
-        </div>
-      )}
-
-      {/* Account list */}
-      {accounts.length === 0 ? (
-        <div className="text-sm text-stone-400 text-center py-8">{t("noAccounts")}</div>
-      ) : (
-        <div className="space-y-2">
-          {accounts.map((a) => (
-            <div key={a.id} className="bg-white border border-stone-200 rounded-xl px-4 py-3 shadow-sm flex items-center justify-between gap-3">
-              <div>
-                <div className="text-sm font-semibold text-stone-800">{a.displayName || a.username} <span className="text-stone-400 font-normal">@{a.username}</span></div>
-                <div className="flex items-center gap-2 mt-0.5">
-                  <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${a.role === "admin" ? "bg-rose-100 text-rose-500" : "bg-amber-100 text-amber-600"}`}>
-                    {a.role === "admin" ? t("roleAdmin") : t("roleStaff")}
-                  </span>
-                  {a.canApprove && <span className="text-[10px] text-green-600 bg-green-50 px-2 py-0.5 rounded-full">{t("accountCanApprove")}</span>}
-                </div>
-              </div>
-              <div className="flex gap-2">
-                <button type="button" onClick={() => openEdit(a)} className="text-stone-400 hover:text-rose-400 transition p-1"><Pencil size={15} /></button>
-                <button type="button" onClick={() => onDelete(a.id)} className="text-stone-400 hover:text-rose-500 transition p-1"><Trash2 size={15} /></button>
-              </div>
-            </div>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
-
-/* ════════════════════════════════════════════════════
-   ADMIN INTRO EDITOR (lives inside CalendarPage header as a small button)
-   — shown as a separate small section at top of calendar when admin
-════════════════════════════════════════════════════ */
-
-function IntroEditor({ t, lang, introText, onSave }) {
-  const [open, setOpen] = useState(false);
-  const [zh, setZh] = useState(introText?.zh || "");
-  const [en, setEn] = useState(introText?.en || "");
-
-  useEffect(() => {
-    setZh(introText?.zh || "");
-    setEn(introText?.en || "");
-  }, [introText]);
-
-  const save = () => { onSave(zh, en); setOpen(false); };
-
-  if (!open) {
-    return (
-      <button type="button" onClick={() => setOpen(true)}
-        className="flex items-center gap-1.5 text-xs font-medium text-stone-400 hover:text-rose-400 border border-stone-200 hover:border-rose-200 px-3 py-1.5 rounded-lg transition">
-        <Pencil size={12} /> {t("editIntro")}
-      </button>
-    );
-  }
-  return (
-    <div className="bg-white border border-rose-200 rounded-xl p-4 shadow-sm w-full max-w-xl">
-      <div className="text-xs font-semibold text-stone-500 mb-2">{t("editIntro")}</div>
-      <textarea value={zh} onChange={(e) => setZh(e.target.value)} rows={3} className="w-full text-sm border border-stone-200 rounded-lg px-3 py-2 mb-2 focus:outline-none focus:border-rose-400 resize-none" placeholder="中文介紹詞" />
-      <textarea value={en} onChange={(e) => setEn(e.target.value)} rows={3} className="w-full text-sm border border-stone-200 rounded-lg px-3 py-2 mb-3 focus:outline-none focus:border-rose-400 resize-none" placeholder="English introduction" />
-      <div className="flex gap-2">
-        <button type="button" onClick={save} className="bg-rose-400 hover:bg-rose-500 text-white text-xs font-medium px-3 py-1.5 rounded-lg transition">{t("saveIntro")}</button>
-        <button type="button" onClick={() => setOpen(false)} className="text-xs text-stone-500 border border-stone-200 px-3 py-1.5 rounded-lg transition">{t("cancel")}</button>
-      </div>
-    </div>
-  );
-}
 
 function FirestoreTestPage({ t, lang, showToast }) {
   const [text, setText] = useState("");
