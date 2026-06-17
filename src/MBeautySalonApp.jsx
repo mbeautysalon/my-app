@@ -479,7 +479,7 @@ export default function App() {
 }
 
 function AppInner() {
-  const [lang, setLang] = useState("zh");
+  const [lang, setLang] = useState("en");
   const [user, setUser] = useState(null);
   const [accounts, setAccounts] = useState([]);       // loaded from Firestore "accounts"
   const [page, setPage] = useState("home");
