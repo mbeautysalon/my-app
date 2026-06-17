@@ -1,4 +1,4 @@
-import React, { useState, useMemo, useEffect, useRef } from "react";
+import { useState, useMemo, useEffect, useRef } from "react";
 
 import {
   Calendar, Scissors, MapPin, LogOut, Plus, X, Trash2,
@@ -427,58 +427,7 @@ function fileToDataUrl(file) {
    MAIN APP
 ════════════════════════════════════════════════════ */
 
-/* ════════════════════════════════════════════════════
-   ERROR BOUNDARY
-   Catches render-time crashes (e.g. unexpected data shape from
-   Firestore) so the user sees a recoverable message instead of
-   a blank white screen.
-════════════════════════════════════════════════════ */
-class ErrorBoundary extends React.Component {
-  constructor(props) {
-    super(props);
-    this.state = { hasError: false, error: null };
-  }
-  static getDerivedStateFromError(error) {
-    return { hasError: true, error };
-  }
-  componentDidCatch(error, info) {
-    console.error("App crashed:", error, info);
-  }
-  render() {
-    if (this.state.hasError) {
-      return (
-        <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#FAFAF9", fontFamily: "Inter, sans-serif", padding: 24 }}>
-          <div style={{ maxWidth: 420, textAlign: "center" }}>
-            <div style={{ fontSize: 32, marginBottom: 12 }}>⚠️</div>
-            <div style={{ fontSize: 18, fontWeight: 600, color: "#44403C", marginBottom: 8 }}>
-              Something went wrong / 發生錯誤
-            </div>
-            <div style={{ fontSize: 13, color: "#78716C", marginBottom: 20, lineHeight: 1.6 }}>
-              {this.state.error?.message || "Unknown error"}
-            </div>
-            <button
-              onClick={() => window.location.reload()}
-              style={{ background: "#FB7185", color: "white", border: "none", padding: "10px 20px", borderRadius: 8, fontSize: 13, fontWeight: 500, cursor: "pointer" }}
-            >
-              Reload / 重新載入
-            </button>
-          </div>
-        </div>
-      );
-    }
-    return this.props.children;
-  }
-}
-
 export default function App() {
-  return (
-    <ErrorBoundary>
-      <AppInner />
-    </ErrorBoundary>
-  );
-}
-
-function AppInner() {
   const [lang, setLang] = useState("zh");
   const [user, setUser] = useState(null);
   const [accounts, setAccounts] = useState([]);       // loaded from Firestore "accounts"
@@ -511,11 +460,7 @@ function AppInner() {
   const [bookingModal, setBookingModal] = useState(null);
   const [serviceModal, setServiceModal] = useState(null);
 
-  const t = (key) => {
-    const entry = T[key];
-    if (entry && typeof entry === "object") return entry[lang] ?? entry.zh ?? entry.en ?? key;
-    return entry ?? key;
-  };
+  const t = (key) => T[key]?.[lang] ?? key;
 
   const showToast = (msg, type = "default") => {
     setToast({ msg, type });
@@ -1093,7 +1038,7 @@ function AppInner() {
           <span className={`text-xs font-semibold px-3 py-1 rounded-full ${user.role === "admin" ? "bg-rose-400 text-white" : "bg-amber-400 text-stone-900"}`}>
             {user.role === "admin" ? t("roleAdmin") : t("roleStaff")}
           </span>
-          <span className="hidden md:inline text-sm text-stone-300">{user.displayName || user.username}</span>
+          <span className="hidden md:inline text-sm text-stone-300">{user.name[lang]}</span>
           <button onClick={handleLogout} className="text-stone-300 hover:text-rose-300 transition flex items-center gap-1 text-sm">
             <LogOut size={16} />
             <span className="hidden sm:inline">{t("logout")}</span>
