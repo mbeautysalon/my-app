@@ -373,9 +373,7 @@ const T = {
   guestDate: { zh: "預約日期 *", en: "Date *" },
   guestTime: { zh: "預約時段 *", en: "Time Slot *" },
   guestContactVia: { zh: "您從哪裡找到我們？", en: "Where did you contact us?" },
-  guestService: { zh: "預計服務項目", en: "Intended Services" },
-  selectServices: { zh: "請選擇服務項目（可複選）", en: "Select services (multiple allowed)" },
-  noServicesSelected: { zh: "請至少選擇一項服務", en: "Please select at least one service" },
+  guestService: { zh: "預計服務項目", en: "Intended Service" },
   guestPayment: { zh: "付款方式", en: "Payment Method" },
   guestSubmit: { zh: "送出預約", en: "Submit Booking" },
   guestSubmitting: { zh: "送出中...", en: "Submitting..." },
@@ -481,7 +479,7 @@ export default function App() {
 }
 
 function AppInner() {
-  const [lang, setLang] = useState("zh");
+  const [lang, setLang] = useState("en");
   const [user, setUser] = useState(null);
   const [accounts, setAccounts] = useState([]);       // loaded from Firestore "accounts"
   const [page, setPage] = useState("home");
@@ -726,7 +724,7 @@ function AppInner() {
         branch: branchIdx,
         name: "",
         phone: "",
-        serviceIds: [],
+        serviceId: "",
         staff: "",
         date: prefillDate || todayStr(),
         time: "10:00",
@@ -742,7 +740,7 @@ function AppInner() {
     }
   };
   const saveBooking = async (data) => {
-    if (!data.name || !data.serviceIds?.length || !data.date || !data.time) {
+    if (!data.name || !data.serviceId || !data.date || !data.time) {
       showToast(t("fillRequired"), "warn");
       return;
     }
@@ -1174,7 +1172,7 @@ function AppInner() {
             <StaffPage t={t} lang={lang} branchInfo={branchInfo} staffList={staffList} addStaff={addStaff} removeStaff={removeStaff} />
           )}
           {page === "pending" && canApprovePending && (
-            <PendingPage t={t} lang={lang} services={services} pendingBookings={pendingBookings} onApprove={approveBooking} onReject={rejectBooking}
+            <PendingPage t={t} lang={lang} pendingBookings={pendingBookings} onApprove={approveBooking} onReject={rejectBooking}
               isAdmin={user.role === "admin"} staffApproveEnabled={staffApproveEnabled} toggleStaffApprove={toggleStaffApprove}
             />
           )}
@@ -1357,89 +1355,11 @@ const BUSINESS_HOURS = [
   "18:00","18:30","19:00","19:30","20:00","20:30",
 ];
 
-/* ════════════════════════════════════════════════════
-   SHARED SERVICE CHECKBOX PICKER
-   Used by both GuestBookingForm and BookingModal.
-   Props:
-     services       — full services array
-     lang           — "zh" | "en"
-     selected       — array of service ids (strings or numbers)
-     onChange(ids)  — called with updated id array
-     readOnly       — boolean, shows tags instead of checkboxes
-════════════════════════════════════════════════════ */
-
-function ServiceCheckboxPicker({ services, lang, selected = [], onChange, readOnly = false }) {
-  const toggle = (id) => {
-    const next = selected.includes(id)
-      ? selected.filter((s) => s !== id)
-      : [...selected, id];
-    onChange(next);
-  };
-
-  if (readOnly) {
-    if (!selected.length) return <span className="text-stone-400 text-sm">—</span>;
-    return (
-      <div className="flex flex-wrap gap-1.5">
-        {selected.map((id) => {
-          const svc = services.find((s) => s.id === id || s.id === String(id));
-          const cat = SERVICE_CATEGORIES.find((c) => c.id === svc?.cat);
-          if (!svc) return null;
-          return (
-            <span key={id} className={`text-xs font-medium px-2 py-0.5 rounded-full ${cat?.chip || "bg-stone-100 text-stone-500"}`}>
-              {lang === "zh" ? svc.nameZh : svc.nameEn}
-            </span>
-          );
-        })}
-      </div>
-    );
-  }
-
-  return (
-    <div className="space-y-3">
-      {SERVICE_CATEGORIES.map((cat) => {
-        const items = services.filter((s) => s.cat === cat.id);
-        if (!items.length) return null;
-        return (
-          <div key={cat.id}>
-            <div className={`text-[10px] font-bold tracking-widest uppercase px-2 py-1 rounded-md mb-1.5 w-fit ${cat.chip}`}>
-              {lang === "zh" ? cat.nameZh : cat.nameEn}
-            </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-1">
-              {items.map((s) => {
-                const checked = selected.includes(s.id) || selected.includes(String(s.id));
-                return (
-                  <label
-                    key={s.id}
-                    className={`flex items-center gap-2.5 px-3 py-2 rounded-lg border cursor-pointer transition text-sm
-                      ${checked
-                        ? "border-rose-300 bg-rose-50 text-rose-700"
-                        : "border-stone-200 bg-stone-50 text-stone-600 hover:border-rose-200 hover:bg-rose-50/50"
-                      }`}
-                  >
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={() => toggle(s.id)}
-                      className="w-3.5 h-3.5 accent-rose-400 flex-shrink-0"
-                    />
-                    <span className="leading-tight">{lang === "zh" ? s.nameZh : s.nameEn}</span>
-                    <span className="ml-auto text-xs font-semibold flex-shrink-0">{lang === "zh" ? s.priceZh : s.priceEn}</span>
-                  </label>
-                );
-              })}
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
 function GuestBookingForm({ t, lang, services, branchInfo, onSubmitted }) {
   const [form, setForm] = useState({
     name: "", phone: "", social: "",
     branch: "0", date: "", time: "",
-    contactVia: "", serviceIds: [], payment: "",
+    contactVia: "", serviceNote: "", payment: "",
   });
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
@@ -1516,14 +1436,8 @@ function GuestBookingForm({ t, lang, services, branchInfo, onSubmitted }) {
           </select>
         </GField>
         <GField label={t("guestService")} full>
-          <div className="border border-stone-200 rounded-xl p-3 bg-stone-50 max-h-64 overflow-y-auto">
-            <ServiceCheckboxPicker
-              services={services}
-              lang={lang}
-              selected={form.serviceIds}
-              onChange={(ids) => set("serviceIds", ids)}
-            />
-          </div>
+          <textarea value={form.serviceNote} onChange={(e) => set("serviceNote", e.target.value)} rows={3}
+            className="ginput resize-none" placeholder={lang==="zh" ? "例如：洗剪吹、凝膠美甲…" : "e.g. Wash & Cut, Gel Nails…"} />
         </GField>
       </div>
 
@@ -1739,9 +1653,8 @@ function CalendarPage({
                       </div>
                     ))}
                     {dayBookings.map((b) => {
-                      const ids = b.serviceIds || (b.serviceId ? [b.serviceId] : []);
-                      const svcs = ids.map((id) => serviceLookup(id)).filter(Boolean);
-                      const firstCat = svcs[0] ? SERVICE_CATEGORIES.find((c) => c.id === svcs[0].cat) : null;
+                      const svc = serviceLookup(b.serviceId);
+                      const svcCat = SERVICE_CATEGORIES.find((c) => c.id === svc?.cat);
                       return (
                         <div
                           key={b.id}
@@ -1752,20 +1665,15 @@ function CalendarPage({
                             <Clock size={10} /> {b.time} · {b.staff || "—"}
                           </div>
                           <div className="text-xs font-semibold text-stone-800 group-hover:text-white">{b.name}</div>
-                          <div className="flex flex-wrap gap-1 mt-0.5">
-                            {firstCat && (
-                              <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-full ${firstCat.chip} group-hover:bg-white/20 group-hover:text-white`}>
-                                {lang === "zh" ? firstCat.nameZh : firstCat.nameEn}
+                          <div className="flex items-center gap-1 mt-0.5">
+                            {svcCat && (
+                              <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-full ${svcCat.chip} group-hover:bg-white/20 group-hover:text-white`}>
+                                {lang === "zh" ? svcCat.nameZh : svcCat.nameEn}
                               </span>
                             )}
                             <span className="text-[10px] text-stone-500 group-hover:text-rose-50 truncate">
-                              {svcs.length > 0
-                                ? svcs.map((s) => lang === "zh" ? s.nameZh : s.nameEn).join(", ")
-                                : "—"}
+                              {svc ? (lang === "zh" ? svc.nameZh : svc.nameEn) : ""}
                             </span>
-                            {svcs.length > 1 && (
-                              <span className="text-[9px] text-stone-400 group-hover:text-rose-100">+{svcs.length - 1}</span>
-                            )}
                           </div>
                         </div>
                       );
@@ -1790,11 +1698,12 @@ function formatTime(d) {
 ════════════════════════════════════════════════════ */
 
 function BookingModal({ t, lang, user, mode, data, services, onClose, onSave, onDelete }) {
-  const [form, setForm] = useState({ ...data, serviceIds: data.serviceIds || (data.serviceId ? [data.serviceId] : []) });
+  const [form, setForm] = useState(data);
   const set = (field, value) => setForm((f) => ({ ...f, [field]: value }));
   const readOnly = mode === "view";
 
   const title = mode === "new" ? t("newAppointment") : mode === "edit" ? t("editAppointment") : t("appointmentDetail");
+  const svc = services.find((s) => s.id === form.serviceId);
 
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={onClose}>
@@ -1808,10 +1717,7 @@ function BookingModal({ t, lang, user, mode, data, services, onClose, onSave, on
           <div className="px-6 py-4 space-y-0">
             <DetailRow label={t("customerName")} value={form.name} />
             <DetailRow label={t("phone")} value={form.phone || "—"} />
-            <div className="flex gap-3 py-2.5 border-b border-stone-100">
-              <span className="text-xs font-semibold text-stone-400 w-24 flex-shrink-0">{t("service")}</span>
-              <ServiceCheckboxPicker services={services} lang={lang} selected={form.serviceIds || []} onChange={() => {}} readOnly />
-            </div>
+            <DetailRow label={t("service")} value={svc ? (lang === "zh" ? svc.nameZh : svc.nameEn) : "—"} />
             <DetailRow label={t("stylist")} value={form.staff || "—"} />
             <DetailRow label={t("date")} value={form.date} />
             <DetailRow label={t("time")} value={form.time} />
@@ -1825,8 +1731,24 @@ function BookingModal({ t, lang, user, mode, data, services, onClose, onSave, on
             <Field label={t("phone")}>
               <input value={form.phone} onChange={(e) => set("phone", e.target.value)} className="input" placeholder="+63 ..." />
             </Field>
+            <Field label={`${t("service")} *`}>
+              <select value={form.serviceId} onChange={(e) => set("serviceId", e.target.value)} className="input">
+                <option value="">{t("selectService")}</option>
+                {SERVICE_CATEGORIES.map((cat) => {
+                  const items = services.filter((s) => s.cat === cat.id);
+                  if (items.length === 0) return null;
+                  return (
+                    <optgroup key={cat.id} label={lang === "zh" ? cat.nameZh : cat.nameEn}>
+                      {items.map((s) => (
+                        <option key={s.id} value={s.id}>{lang === "zh" ? s.nameZh : s.nameEn}</option>
+                      ))}
+                    </optgroup>
+                  );
+                })}
+              </select>
+            </Field>
             <Field label={t("stylist")}>
-              <input value={form.staff || ""} onChange={(e) => set("staff", e.target.value)} className="input" placeholder="e.g. Jenny" />
+              <input value={form.staff} onChange={(e) => set("staff", e.target.value)} className="input" placeholder="e.g. Jenny" />
             </Field>
             <Field label={`${t("date")} *`}>
               <input type="date" value={form.date} onChange={(e) => set("date", e.target.value)} className="input" />
@@ -1841,17 +1763,7 @@ function BookingModal({ t, lang, user, mode, data, services, onClose, onSave, on
               </select>
             </Field>
             <Field label={t("notes")}>
-              <input value={form.note || ""} onChange={(e) => set("note", e.target.value)} className="input" />
-            </Field>
-            <Field label={`${t("service")} *`} full>
-              <div className="border border-stone-200 rounded-xl p-3 bg-stone-50 max-h-72 overflow-y-auto">
-                <ServiceCheckboxPicker
-                  services={services}
-                  lang={lang}
-                  selected={form.serviceIds || []}
-                  onChange={(ids) => set("serviceIds", ids)}
-                />
-              </div>
+              <input value={form.note} onChange={(e) => set("note", e.target.value)} className="input" />
             </Field>
           </div>
         )}
@@ -1878,9 +1790,9 @@ function BookingModal({ t, lang, user, mode, data, services, onClose, onSave, on
   );
 }
 
-function Field({ label, children, full }) {
+function Field({ label, children }) {
   return (
-    <div className={`flex flex-col gap-1.5${full ? " sm:col-span-2" : ""}`}>
+    <div className="flex flex-col gap-1.5">
       <label className="text-xs font-medium text-stone-500">{label}</label>
       {children}
     </div>
@@ -2249,7 +2161,7 @@ function StaffBranchCard({ t, lang, branch, idx, names, addStaff, removeStaff })
    PENDING BOOKINGS PAGE
 ════════════════════════════════════════════════════ */
 
-function PendingPage({ t, lang, services, pendingBookings, onApprove, onReject, isAdmin, staffApproveEnabled, toggleStaffApprove }) {
+function PendingPage({ t, lang, pendingBookings, onApprove, onReject, isAdmin, staffApproveEnabled, toggleStaffApprove }) {
   const [processing, setProcessing] = useState(null);
 
   const approve = async (pb) => {
@@ -2307,18 +2219,13 @@ function PendingPage({ t, lang, services, pendingBookings, onApprove, onReject, 
                       ["FB/IG", pb.social],
                       [t("guestContactVia"), pb.contactVia],
                       [t("guestPayment"), pb.payment],
+                      [t("guestService"), pb.serviceNote],
                     ].filter(([,v]) => v).map(([label, val]) => (
                       <div key={label} className="text-xs text-stone-600">
                         <span className="font-medium text-stone-400">{label}: </span>{val}
                       </div>
                     ))}
                   </div>
-                  {pb.serviceIds?.length > 0 && (
-                    <div className="mt-2">
-                      <span className="text-xs font-medium text-stone-400">{t("service")}: </span>
-                      <ServiceCheckboxPicker services={services} lang={lang} selected={pb.serviceIds} onChange={() => {}} readOnly />
-                    </div>
-                  )}
                 </div>
                 <div className="flex gap-2 flex-shrink-0">
                   <button
