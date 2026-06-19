@@ -3,7 +3,7 @@ import React, { useState, useMemo, useEffect, useRef } from "react";
 import {
   Calendar, Scissors, MapPin, LogOut, Plus, X, Trash2,
   Pencil, ChevronLeft, ChevronRight, Image as ImageIcon, Clock,
-  Eye, EyeOff, Lock, User, Users, Menu, Phone, Database, Send, RefreshCw, ClipboardCopy, FileText
+  Eye, Lock, User, Users, Menu, Phone, Database, Send, RefreshCw
 } from "lucide-react";
 
 import { initializeApp } from "firebase/app";
@@ -292,11 +292,6 @@ const T = {
   cancel: { zh: "取消", en: "Cancel" },
   close: { zh: "關閉", en: "Close" },
   delete: { zh: "刪除", en: "Delete" },
-  exportText: { zh: "輸出文字", en: "Export Text" },
-  copyText: { zh: "複製", en: "Copy" },
-  copied: { zh: "已複製！", en: "Copied!" },
-  hideExport: { zh: "收起", en: "Hide" },
-  branchNames: { 0: "Lahug Branch (Salinas Premier)", 1: "Emall Branch (2nd Floor)" },
   required: { zh: "必填", en: "required" },
   fillRequired: { zh: "請填寫所有必填欄位", en: "Please fill in all required fields" },
   savedAppt: { zh: "預約已儲存", en: "Appointment saved" },
@@ -317,11 +312,6 @@ const T = {
   savedService: { zh: "服務已儲存", en: "Service saved" },
   deletedService: { zh: "已刪除", en: "Deleted" },
   confirmDeleteService: { zh: "確定要刪除此服務嗎？", en: "Delete this service?" },
-  hideService: { zh: "隱藏", en: "Hide" },
-  showService: { zh: "顯示", en: "Show" },
-  hiddenBadge: { zh: "已隱藏", en: "Hidden" },
-  hiddenCount: { zh: "項已隱藏", en: "hidden" },
-  viewLarger: { zh: "點擊放大", en: "Click to enlarge" },
   enterServiceName: { zh: "請輸入服務名稱", en: "Please enter a service name" },
 
   gallery: { zh: "服務圖片庫", en: "Service Gallery" },
@@ -491,7 +481,7 @@ export default function App() {
 }
 
 function AppInner() {
-  const [lang, setLang] = useState("en");		// 系統預設文字語言 en英文 zh中文
+  const [lang, setLang] = useState("zh");
   const [user, setUser] = useState(null);
   const [accounts, setAccounts] = useState([]);       // loaded from Firestore "accounts"
   const [page, setPage] = useState("home");
@@ -823,14 +813,6 @@ function AppInner() {
       showToast(t("syncError"), "warn");
     }
   };
-  const toggleServiceHidden = async (s) => {
-    try {
-      await updateDoc(doc(db, "services", s.id), { hidden: !s.hidden });
-    } catch (err) {
-      console.error("toggleServiceHidden error:", err);
-      showToast(t("syncError"), "warn");
-    }
-  };
 
   /* ───── GALLERY HANDLERS ───── */
   const MAX_IMAGE_BYTES = 700 * 1024; // ~700KB safety margin under Firestore's 1MB doc limit
@@ -1069,8 +1051,6 @@ function AppInner() {
         onLogin={handleLogin}
         branchInfo={branchInfo}
         services={services}
-        gallery={gallery}
-        mapImages={mapImages}
       />
     );
   }
@@ -1183,7 +1163,7 @@ function AppInner() {
             <ServicesPage
               t={t} lang={lang} user={user}
               services={services} gallery={galleryAll}
-              openNewService={openNewService} openEditService={openEditService} deleteService={deleteService} toggleServiceHidden={toggleServiceHidden}
+              openNewService={openNewService} openEditService={openEditService} deleteService={deleteService}
               handleGalleryUpload={handleGalleryUpload} deleteGalleryImg={deleteGalleryImg}
             />
           )}
@@ -1248,13 +1228,12 @@ function AppInner() {
    and a small login widget in the top-right corner.
 ════════════════════════════════════════════════════ */
 
-function HomePage({ lang, setLang, t, introText, onLogin, branchInfo, services, gallery, mapImages }) {
+function HomePage({ lang, setLang, t, introText, onLogin, branchInfo, services }) {
   const [showLogin, setShowLogin] = useState(false);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
   const [loginError, setLoginError] = useState("");
   const [submitted, setSubmitted] = useState(false);
-  const [guestPage, setGuestPage] = useState("home"); // "home" | "services" | "contact"
 
   const displayIntro = introText?.[lang] || T["homeIntro"]?.[lang] || "";
 
@@ -1265,16 +1244,6 @@ function HomePage({ lang, setLang, t, introText, onLogin, branchInfo, services, 
   };
   const keyDown = (e) => { if (e.key === "Enter") submit(); };
 
-  const NAV = [
-    { id: "home",     label: lang === "zh" ? "首頁" : "Home" },
-    { id: "services", label: lang === "zh" ? "服務項目" : "Services" },
-    { id: "contact",  label: lang === "zh" ? "聯絡我們" : "Contact" },
-  ];
-
-  // Guest user object — read-only, no admin controls
-  const guestUser = { role: "guest" };
-  const noop = () => {};
-
   return (
     <div className="min-h-screen bg-stone-50" style={{ fontFamily: "'Inter', sans-serif" }}>
       <style>{`
@@ -1283,138 +1252,94 @@ function HomePage({ lang, setLang, t, introText, onLogin, branchInfo, services, 
       `}</style>
 
       {/* Top bar */}
-      <div className="fixed top-0 left-0 right-0 z-30 bg-stone-900">
-        <div className="flex items-center justify-between px-5 py-3">
-          {/* Logo */}
-          <button type="button" onClick={() => setGuestPage("home")} className="flex items-center gap-2">
-            <img src={LOGO_ICON_URL} alt="M Beauty" className="w-8 h-8 rounded-full bg-rose-50 object-contain p-1" />
-            <span className="font-display text-white text-lg italic tracking-wide">M <span className="text-amber-400 not-italic">Beauty</span> Salon & Nails</span>
-          </button>
-
-          <div className="flex items-center gap-3">
-            {/* Lang toggle */}
-            <div className="flex items-center gap-1 bg-stone-800 rounded-full p-0.5">
-              <button onClick={() => setLang("zh")} className={`text-xs px-2.5 py-1 rounded-full transition ${lang==="zh" ? "bg-amber-400 text-stone-900 font-medium" : "text-stone-300"}`}>中文</button>
-              <button onClick={() => setLang("en")} className={`text-xs px-2.5 py-1 rounded-full transition ${lang==="en" ? "bg-amber-400 text-stone-900 font-medium" : "text-stone-300"}`}>EN</button>
-            </div>
-
-            {/* Staff login */}
-            <div className="relative">
-              <button
-                type="button"
-                onClick={() => setShowLogin((v) => !v)}
-                className="flex items-center gap-1.5 text-xs font-medium border border-stone-600 text-stone-300 hover:border-amber-400 hover:text-amber-400 px-3 py-1.5 rounded-lg transition"
-              >
-                <Lock size={12} /> {lang === "zh" ? "員工登入" : "Staff Login"}
-              </button>
-              {showLogin && (
-                <div className="absolute top-10 right-0 w-72 bg-white rounded-xl shadow-2xl border border-stone-200 p-4 z-50">
-                  <div className="text-sm font-semibold text-stone-700 mb-3">{t("loginTitle")}</div>
-                  <div className="space-y-2">
-                    <input value={username} onChange={(e) => setUsername(e.target.value)} onKeyDown={keyDown} placeholder={t("username")} className="w-full px-3 py-2 text-sm border border-stone-200 rounded-lg bg-stone-50 focus:outline-none focus:border-rose-400 transition" />
-                    <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} onKeyDown={keyDown} placeholder={t("password")} className="w-full px-3 py-2 text-sm border border-stone-200 rounded-lg bg-stone-50 focus:outline-none focus:border-rose-400 transition" />
-                    {loginError && <div className="text-xs text-rose-500">{loginError}</div>}
-                    <button type="button" onClick={submit} className="w-full bg-rose-400 hover:bg-rose-500 text-white text-sm font-medium py-2 rounded-lg transition">{t("loginBtn")}</button>
-                  </div>
-                </div>
-              )}
-            </div>
-          </div>
+      <div className="fixed top-0 left-0 right-0 z-30 flex items-center justify-between px-5 py-3 bg-stone-900">
+        <div className="flex items-center gap-2">
+          <img src={LOGO_ICON_URL} alt="M Beauty" className="w-8 h-8 rounded-full bg-rose-50 object-contain p-1" />
+          <span className="font-display text-white text-lg italic tracking-wide">M <span className="text-amber-400 not-italic">Beauty</span> Salon & Nails</span>
         </div>
-
-        {/* Tab nav */}
-        <div className="flex items-center gap-1 px-5 pb-2">
-          {NAV.map((nav) => (
+        <div className="flex items-center gap-2">
+          <div className="flex items-center gap-1 bg-stone-800 rounded-full p-0.5">
+            <button onClick={() => setLang("zh")} className={`text-xs px-2.5 py-1 rounded-full transition ${lang==="zh" ? "bg-amber-400 text-stone-900 font-medium" : "text-stone-300"}`}>中文</button>
+            <button onClick={() => setLang("en")} className={`text-xs px-2.5 py-1 rounded-full transition ${lang==="en" ? "bg-amber-400 text-stone-900 font-medium" : "text-stone-300"}`}>EN</button>
+          </div>
+          <div className="relative">
             <button
-              key={nav.id}
               type="button"
-              onClick={() => setGuestPage(nav.id)}
-              className={`text-xs font-medium px-3 py-1.5 rounded-lg transition ${
-                guestPage === nav.id
-                  ? "bg-rose-400 text-white"
-                  : "text-stone-400 hover:text-white hover:bg-stone-700"
-              }`}
+              onClick={() => setShowLogin((v) => !v)}
+              className="flex items-center gap-1.5 text-xs font-medium border border-stone-600 text-stone-300 hover:border-amber-400 hover:text-amber-400 px-3 py-1.5 rounded-lg transition"
             >
-              {nav.label}
+              <Lock size={12} /> {lang === "zh" ? "員工登入" : "Staff Login"}
             </button>
-          ))}
+            {showLogin && (
+              <div className="absolute top-10 right-0 w-72 bg-white rounded-xl shadow-2xl border border-stone-200 p-4 z-50">
+                <div className="text-sm font-semibold text-stone-700 mb-3">{t("loginTitle")}</div>
+                <div className="space-y-2">
+                  <input
+                    value={username}
+                    onChange={(e) => setUsername(e.target.value)}
+                    onKeyDown={keyDown}
+                    placeholder={t("username")}
+                    className="w-full px-3 py-2 text-sm border border-stone-200 rounded-lg bg-stone-50 focus:outline-none focus:border-rose-400 transition"
+                  />
+                  <input
+                    type="password"
+                    value={password}
+                    onChange={(e) => setPassword(e.target.value)}
+                    onKeyDown={keyDown}
+                    placeholder={t("password")}
+                    className="w-full px-3 py-2 text-sm border border-stone-200 rounded-lg bg-stone-50 focus:outline-none focus:border-rose-400 transition"
+                  />
+                  {loginError && <div className="text-xs text-rose-500">{loginError}</div>}
+                  <button type="button" onClick={submit} className="w-full bg-rose-400 hover:bg-rose-500 text-white text-sm font-medium py-2 rounded-lg transition">
+                    {t("loginBtn")}
+                  </button>
+                </div>
+              </div>
+            )}
+          </div>
         </div>
       </div>
 
-      {/* Page content — offset for taller header now (topbar ~56px + tabs ~36px = ~96px) */}
-      <div className="pt-24">
+      <div className="pt-20 max-w-4xl mx-auto px-5 pb-16">
+        {/* Hero / intro */}
+        <div className="text-center py-10">
+          <div className="inline-block bg-white rounded-2xl p-4 shadow-sm mb-5 border border-stone-100">
+            <img src={LOGO_DATA_URL} alt="M Beauty Salon & Nails" className="w-36 h-36 mx-auto" />
+          </div>
+          <h1 className="font-display text-3xl md:text-4xl font-light text-stone-800 mb-4">{t("homeTitle")}</h1>
+          <p className="text-stone-500 text-sm leading-relaxed whitespace-pre-line max-w-xl mx-auto">
+            {displayIntro}
+          </p>
+        </div>
 
-        {/* ── HOME ── */}
-        {guestPage === "home" && (
-          <div className="max-w-4xl mx-auto px-5 pb-16">
-            <div className="text-center py-10">
-              <div className="inline-block bg-white rounded-2xl p-4 shadow-sm mb-5 border border-stone-100">
-                <img src={LOGO_DATA_URL} alt="M Beauty Salon & Nails" className="w-36 h-36 mx-auto" />
+        {/* Branch info */}
+        <div className="grid md:grid-cols-2 gap-4 mb-10">
+          {branchInfo.map((b) => (
+            <div key={b.id} className="bg-white rounded-xl border border-stone-200 p-5 shadow-sm">
+              <div className="flex items-center gap-2 mb-3">
+                <span className={`w-2.5 h-2.5 rounded-full ${b.dot}`} />
+                <span className="font-display text-lg font-light text-stone-800">{lang==="zh" ? b.nameZh : b.nameEn}</span>
+                <span className="text-stone-400 text-sm">({b.sub})</span>
               </div>
-              <h1 className="font-display text-3xl md:text-4xl font-light text-stone-800 mb-4">{t("homeTitle")}</h1>
-              <p className="text-stone-500 text-sm leading-relaxed whitespace-pre-line max-w-xl mx-auto">{displayIntro}</p>
-            </div>
-
-            {/* Branch info cards */}
-            <div className="grid md:grid-cols-2 gap-4 mb-10">
-              {branchInfo.map((b) => (
-                <div key={b.id} className="bg-white rounded-xl border border-stone-200 p-5 shadow-sm">
-                  <div className="flex items-center gap-2 mb-3">
-                    <span className={`w-2.5 h-2.5 rounded-full ${b.dot}`} />
-                    <span className="font-display text-lg font-light text-stone-800">{lang==="zh" ? b.nameZh : b.nameEn}</span>
-                    <span className="text-stone-400 text-sm">({b.sub})</span>
-                  </div>
-                  <div className="text-xs text-stone-500 space-y-1">
-                    <div className="flex gap-1.5"><MapPin size={12} className="text-rose-400 flex-shrink-0 mt-0.5" />{b.addr}</div>
-                    <div className="flex gap-1.5"><Phone size={12} className="text-rose-400 flex-shrink-0 mt-0.5" />{b.phone}</div>
-                    <div className="flex gap-1.5"><Clock size={12} className="text-rose-400 flex-shrink-0 mt-0.5" />{b.hours}</div>
-                  </div>
-                </div>
-              ))}
-            </div>
-
-            {/* Booking form */}
-            {submitted ? (
-              <div className="bg-green-50 border border-green-200 rounded-xl p-8 text-center text-green-700 text-sm font-medium">
-                {t("guestSubmitSuccess")}
-                <button type="button" onClick={() => setSubmitted(false)} className="mt-4 block mx-auto text-xs text-stone-400 underline">
-                  {lang==="zh" ? "再填一份" : "Submit another"}
-                </button>
+              <div className="text-xs text-stone-500 space-y-1">
+                <div className="flex gap-1.5"><MapPin size={12} className="text-rose-400 flex-shrink-0 mt-0.5" />{b.addr}</div>
+                <div className="flex gap-1.5"><Phone size={12} className="text-rose-400 flex-shrink-0 mt-0.5" />{b.phone}</div>
+                <div className="flex gap-1.5"><Clock size={12} className="text-rose-400 flex-shrink-0 mt-0.5" />{b.hours}</div>
               </div>
-            ) : (
-              <GuestBookingForm t={t} lang={lang} services={services} branchInfo={branchInfo} onSubmitted={() => setSubmitted(true)} />
-            )}
-          </div>
-        )}
+            </div>
+          ))}
+        </div>
 
-        {/* ── SERVICES (read-only) ── */}
-        {guestPage === "services" && (
-          <div className="max-w-4xl mx-auto px-5 pb-16">
-            <ServicesPage
-              t={t} lang={lang}
-              user={guestUser}
-              services={services}
-              gallery={gallery}
-              openNewService={noop} openEditService={noop} deleteService={noop}
-              toggleServiceHidden={noop} handleGalleryUpload={noop} deleteGalleryImg={noop}
-            />
+        {/* Guest booking form */}
+        {submitted ? (
+          <div className="bg-green-50 border border-green-200 rounded-xl p-8 text-center text-green-700 text-sm font-medium">
+            {t("guestSubmitSuccess")}
+            <button type="button" onClick={() => setSubmitted(false)} className="mt-4 block mx-auto text-xs text-stone-400 underline">
+              {lang==="zh" ? "再填一份" : "Submit another"}
+            </button>
           </div>
-        )}
-
-        {/* ── CONTACT (read-only) ── */}
-        {guestPage === "contact" && (
-          <div className="max-w-4xl mx-auto px-5 pb-16">
-            <ContactPage
-              t={t} lang={lang}
-              user={guestUser}
-              branchInfo={branchInfo}
-              updateBranchInfo={noop}
-              showToast={noop}
-              mapImages={mapImages}
-              handleMapUpload={noop}
-              removeMapImage={noop}
-            />
-          </div>
+        ) : (
+          <GuestBookingForm t={t} lang={lang} services={services} branchInfo={branchInfo} onSubmitted={() => setSubmitted(true)} />
         )}
       </div>
     </div>
@@ -1433,56 +1358,6 @@ const BUSINESS_HOURS = [
 ];
 
 /* ════════════════════════════════════════════════════
-   IMAGE LIGHTBOX
-   Shows any image full-screen on click.
-   Usage: <ClickableImage src={...} alt={...} className={...} />
-════════════════════════════════════════════════════ */
-
-function ImageLightbox({ src, onClose }) {
-  useEffect(() => {
-    const handler = (e) => { if (e.key === "Escape") onClose(); };
-    window.addEventListener("keydown", handler);
-    return () => window.removeEventListener("keydown", handler);
-  }, [onClose]);
-
-  return (
-    <div
-      className="fixed inset-0 z-[200] bg-black/85 flex items-center justify-center p-4"
-      onClick={onClose}
-    >
-      <button
-        onClick={onClose}
-        className="absolute top-4 right-4 text-white/70 hover:text-white bg-black/40 rounded-full p-2 transition"
-      >
-        <X size={22} />
-      </button>
-      <img
-        src={src}
-        alt="enlarged view"
-        className="max-w-full max-h-full rounded-xl shadow-2xl object-contain"
-        onClick={(e) => e.stopPropagation()}
-      />
-    </div>
-  );
-}
-
-function ClickableImage({ src, alt, className, style }) {
-  const [open, setOpen] = useState(false);
-  return (
-    <>
-      <img
-        src={src}
-        alt={alt}
-        className={`cursor-zoom-in ${className || ""}`}
-        style={style}
-        onClick={() => setOpen(true)}
-      />
-      {open && <ImageLightbox src={src} onClose={() => setOpen(false)} />}
-    </>
-  );
-}
-
-/* ════════════════════════════════════════════════════
    SHARED SERVICE CHECKBOX PICKER
    Used by both GuestBookingForm and BookingModal.
    Props:
@@ -1494,9 +1369,6 @@ function ClickableImage({ src, alt, className, style }) {
 ════════════════════════════════════════════════════ */
 
 function ServiceCheckboxPicker({ services, lang, selected = [], onChange, readOnly = false }) {
-  // Always filter hidden services from picker and read-only display
-  const visibleServices = services.filter((s) => !s.hidden);
-
   const toggle = (id) => {
     const next = selected.includes(id)
       ? selected.filter((s) => s !== id)
@@ -1509,7 +1381,6 @@ function ServiceCheckboxPicker({ services, lang, selected = [], onChange, readOn
     return (
       <div className="flex flex-wrap gap-1.5">
         {selected.map((id) => {
-          // For read-only (detail view), show even hidden services if already booked
           const svc = services.find((s) => s.id === id || s.id === String(id));
           const cat = SERVICE_CATEGORIES.find((c) => c.id === svc?.cat);
           if (!svc) return null;
@@ -1526,7 +1397,7 @@ function ServiceCheckboxPicker({ services, lang, selected = [], onChange, readOn
   return (
     <div className="space-y-3">
       {SERVICE_CATEGORIES.map((cat) => {
-        const items = visibleServices.filter((s) => s.cat === cat.id);
+        const items = services.filter((s) => s.cat === cat.id);
         if (!items.length) return null;
         return (
           <div key={cat.id}>
@@ -1922,52 +1793,11 @@ function BookingModal({ t, lang, user, mode, data, services, onClose, onSave, on
   const [form, setForm] = useState({ ...data, serviceIds: data.serviceIds || (data.serviceId ? [data.serviceId] : []) });
   const set = (field, value) => setForm((f) => ({ ...f, [field]: value }));
   const readOnly = mode === "view";
-  const [showExport, setShowExport] = useState(false);
-  const [copied, setCopied] = useState(false);
-
-  const BRANCH_LABELS = { 0: "Lahug Branch (Salinas Premier)", 1: "Emall Branch (2nd Floor)" };
-
-  const buildExportText = () => {
-    const svcNames = (form.serviceIds || [])
-      .map((id) => {
-        const s = services.find((x) => x.id === id || x.id === String(id));
-        return s ? s.nameEn : null;
-      })
-      .filter(Boolean);
-
-    const contact = [form.social, form.phone].filter(Boolean).join(" / ") || "—";
-
-    return [
-      "Reservation:",
-      `Date & Time: ${form.date || "—"}  ${form.time || ""}`.trim(),
-      `Services: ${svcNames.length ? svcNames.join(", ") : "—"}`,
-      `Customer: ${form.name || "—"}  |  Contact: ${contact}`,
-      `Branch: ${BRANCH_LABELS[form.branch] ?? form.branch ?? "—"}`,
-    ].join("\n");
-  };
-
-  const handleCopy = async () => {
-    try {
-      await navigator.clipboard.writeText(buildExportText());
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    } catch {
-      // Fallback for browsers that block clipboard API
-      const el = document.createElement("textarea");
-      el.value = buildExportText();
-      document.body.appendChild(el);
-      el.select();
-      document.execCommand("copy");
-      document.body.removeChild(el);
-      setCopied(true);
-      setTimeout(() => setCopied(false), 2000);
-    }
-  };
 
   const title = mode === "new" ? t("newAppointment") : mode === "edit" ? t("editAppointment") : t("appointmentDetail");
 
   return (
-    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-white rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto shadow-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-6 py-4 border-b border-stone-100">
           <h2 className="font-display text-xl font-light text-stone-800">{title}</h2>
@@ -2026,47 +1856,10 @@ function BookingModal({ t, lang, user, mode, data, services, onClose, onSave, on
           </div>
         )}
 
-        {/* ── Export Text Panel (admin + edit mode) ── */}
-        {mode === "edit" && user.role === "admin" && showExport && (
-          <div className="mx-6 mb-4 rounded-xl border border-stone-200 bg-stone-50 overflow-hidden">
-            <div className="flex items-center justify-between px-3 py-2 border-b border-stone-200 bg-stone-100">
-              <span className="text-xs font-semibold text-stone-500 flex items-center gap-1.5">
-                <FileText size={13} /> Reservation Summary
-              </span>
-              <button
-                onClick={handleCopy}
-                className={`flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg transition
-                  ${copied
-                    ? "bg-green-400 text-white"
-                    : "bg-rose-400 hover:bg-rose-500 text-white"}`}
-              >
-                <ClipboardCopy size={13} />
-                {copied ? t("copied") : t("copyText")}
-              </button>
-            </div>
-            <pre className="px-4 py-3 text-xs text-stone-700 leading-relaxed whitespace-pre-wrap font-mono select-all">
-              {buildExportText()}
-            </pre>
-          </div>
-        )}
-
-        <div className="flex items-center gap-2 px-6 py-4 border-t border-stone-100 flex-wrap">
+        <div className="flex items-center gap-2 px-6 py-4 border-t border-stone-100">
           {mode === "edit" && (
-            <button onClick={() => onDelete(form.id)} className="flex items-center gap-1.5 text-rose-500 hover:text-white hover:bg-rose-500 border border-rose-200 hover:border-rose-500 text-sm font-medium px-3 py-2 rounded-lg transition">
+            <button onClick={() => onDelete(form.id)} className="flex items-center gap-1.5 text-rose-500 hover:text-white hover:bg-rose-500 border border-rose-200 hover:border-rose-500 text-sm font-medium px-3 py-2 rounded-lg transition mr-auto">
               <Trash2 size={15} /> {t("delete")}
-            </button>
-          )}
-          {/* Export button — admin + edit only */}
-          {mode === "edit" && user.role === "admin" && (
-            <button
-              onClick={() => setShowExport((v) => !v)}
-              className={`flex items-center gap-1.5 text-sm font-medium px-3 py-2 rounded-lg border transition
-                ${showExport
-                  ? "bg-stone-100 border-stone-300 text-stone-600"
-                  : "border-stone-200 text-stone-500 hover:border-rose-300 hover:text-rose-500"}`}
-            >
-              <FileText size={15} />
-              {showExport ? t("hideExport") : t("exportText")}
             </button>
           )}
           <button onClick={onClose} className="text-sm font-medium text-stone-500 border border-stone-200 hover:border-stone-300 px-4 py-2 rounded-lg transition ml-auto">
@@ -2106,7 +1899,7 @@ function DetailRow({ label, value }) {
    SERVICES PAGE
 ════════════════════════════════════════════════════ */
 
-function ServicesPage({ t, lang, user, services, gallery, openNewService, openEditService, deleteService, toggleServiceHidden, handleGalleryUpload, deleteGalleryImg }) {
+function ServicesPage({ t, lang, user, services, gallery, openNewService, openEditService, deleteService, handleGalleryUpload, deleteGalleryImg }) {
   const isAdmin = user.role === "admin";
   return (
     <div>
@@ -2123,13 +1916,10 @@ function ServicesPage({ t, lang, user, services, gallery, openNewService, openEd
         </h3>
         <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 gap-3 mb-4">
           {gallery.map((img) => (
-            <div key={img.id} className="relative aspect-square rounded-lg overflow-hidden border border-stone-200 group">
-              <ClickableImage src={img.src} alt="service" className="w-full h-full object-cover" />
+            <div key={img.id} className="relative aspect-square rounded-lg overflow-hidden border border-stone-200">
+              <img src={img.src} alt="service" className="w-full h-full object-cover" />
               {isAdmin && (
-                <button
-                  onClick={() => deleteGalleryImg(img.id)}
-                  className="absolute top-1 right-1 bg-rose-500/90 text-white rounded-full w-5 h-5 flex items-center justify-center text-[11px] opacity-0 group-hover:opacity-100 transition"
-                >
+                <button onClick={() => deleteGalleryImg(img.id)} className="absolute top-1 right-1 bg-rose-500/90 text-white rounded-full w-5 h-5 flex items-center justify-center text-[11px]">
                   <X size={11} />
                 </button>
               )}
@@ -2155,7 +1945,6 @@ function ServicesPage({ t, lang, user, services, gallery, openNewService, openEd
             services={services}
             t={t} lang={lang} isAdmin={isAdmin}
             onEdit={openEditService} onDelete={deleteService}
-            onToggleHidden={toggleServiceHidden}
             onAdd={() => openNewService(cat.id)}
           />
         ))}
@@ -2164,24 +1953,13 @@ function ServicesPage({ t, lang, user, services, gallery, openNewService, openEd
   );
 }
 
-function ServiceList({ category, services, t, lang, isAdmin, onEdit, onDelete, onToggleHidden, onAdd }) {
-  const allItems = services.filter((s) => s.cat === category.id);
-  // Non-admins only see visible items; admins see all with a dim on hidden ones
-  const items = isAdmin ? allItems : allItems.filter((s) => !s.hidden);
-  const hiddenCount = allItems.filter((s) => s.hidden).length;
+function ServiceList({ category, services, t, lang, isAdmin, onEdit, onDelete, onAdd }) {
+  const items = services.filter((s) => s.cat === category.id);
   const note = lang === "zh" ? category.noteZh : category.noteEn;
-
   return (
     <div className="bg-white border border-stone-200 rounded-xl p-5 shadow-sm">
       <div className="flex items-center justify-between pb-2.5 border-b border-stone-100 mb-2">
-        <div className="flex items-center gap-2">
-          <h3 className="font-display text-lg font-light text-stone-800">{lang === "zh" ? category.nameZh : category.nameEn}</h3>
-          {isAdmin && hiddenCount > 0 && (
-            <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-stone-200 text-stone-500">
-              {hiddenCount} {t("hiddenCount")}
-            </span>
-          )}
-        </div>
+        <h3 className="font-display text-lg font-light text-stone-800">{lang === "zh" ? category.nameZh : category.nameEn}</h3>
         {isAdmin && (
           <button onClick={onAdd} className="flex items-center gap-1 text-xs font-medium text-rose-400 hover:text-rose-500 transition">
             <Plus size={14} /> {t("addService")}
@@ -2192,39 +1970,17 @@ function ServiceList({ category, services, t, lang, isAdmin, onEdit, onDelete, o
       {items.length === 0 && <div className="text-sm text-stone-400 py-3">{t("noItems")}</div>}
       <div className="space-y-2">
         {items.map((s) => (
-          <div
-            key={s.id}
-            className={`flex items-center justify-between gap-3 border rounded-lg px-3 py-2.5 transition
-              ${s.hidden ? "bg-stone-100 border-stone-200 opacity-60" : "bg-stone-50 border-stone-100"}`}
-          >
+          <div key={s.id} className="flex items-center justify-between gap-3 bg-stone-50 border border-stone-100 rounded-lg px-3 py-2.5">
             <div className="min-w-0">
-              <div className="flex items-center gap-1.5">
-                <span className={`text-sm font-medium ${s.hidden ? "text-stone-400 line-through" : "text-stone-800"}`}>
-                  {lang === "zh" ? s.nameZh : s.nameEn}
-                </span>
-                {isAdmin && s.hidden && (
-                  <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-stone-300 text-stone-600">
-                    {t("hiddenBadge")}
-                  </span>
-                )}
-              </div>
+              <div className="text-sm font-medium text-stone-800">{lang === "zh" ? s.nameZh : s.nameEn}</div>
               {isAdmin && s.dur != null && (
                 <div className="text-[11px] text-stone-400">({s.dur} {t("min")})</div>
               )}
             </div>
-            <div className="flex items-center gap-2 flex-shrink-0">
-              <span className={`text-sm font-semibold whitespace-nowrap ${s.hidden ? "text-stone-400" : "text-rose-400"}`}>
-                {lang === "zh" ? s.priceZh : s.priceEn}
-              </span>
+            <div className="flex items-center gap-2.5 flex-shrink-0">
+              <span className="text-sm font-semibold text-rose-400 whitespace-nowrap">{lang === "zh" ? s.priceZh : s.priceEn}</span>
               {isAdmin && (
                 <div className="flex gap-1">
-                  <button
-                    onClick={() => onToggleHidden(s)}
-                    title={s.hidden ? t("showService") : t("hideService")}
-                    className={`transition p-1 rounded ${s.hidden ? "text-stone-400 hover:text-green-500" : "text-stone-400 hover:text-amber-500"}`}
-                  >
-                    {s.hidden ? <Eye size={14} /> : <EyeOff size={14} />}
-                  </button>
                   <button onClick={() => onEdit(s)} className="text-stone-400 hover:text-rose-400 transition p-1"><Pencil size={14} /></button>
                   <button onClick={() => onDelete(s.id)} className="text-stone-400 hover:text-rose-500 transition p-1"><Trash2 size={14} /></button>
                 </div>
@@ -2246,7 +2002,7 @@ function ServiceModal({ t, lang, mode, data, onClose, onSave }) {
   const set = (field, value) => setForm((f) => ({ ...f, [field]: value }));
 
   return (
-    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-white rounded-2xl w-full max-w-sm shadow-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-6 py-4 border-b border-stone-100">
           <h2 className="font-display text-xl font-light text-stone-800">{mode === "edit" ? t("editService") : t("addService")}</h2>
@@ -2339,7 +2095,7 @@ function BranchCard({ t, lang, isAdmin, branch, idx, updateBranchInfo, showToast
 
       {mapImage ? (
         <div className="relative h-40 rounded-lg mb-4 overflow-hidden border border-stone-100 group">
-          <ClickableImage src={mapImage} alt={`${branch.nameEn} map`} className="w-full h-full object-cover" />
+          <img src={mapImage} alt={`${branch.nameEn} map`} className="w-full h-full object-cover" />
           {isAdmin && (
             <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition flex items-center justify-center gap-2 opacity-0 group-hover:opacity-100">
               <label className="text-xs font-medium bg-white/90 hover:bg-white text-stone-700 px-3 py-1.5 rounded-lg cursor-pointer transition">
