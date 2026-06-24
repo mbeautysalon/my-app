@@ -522,7 +522,7 @@ export default function App() {
 }
 
 function AppInner() {
-  const [lang, setLang] = useState("zh");
+  const [lang, setLang] = useState("en");
   const [user, setUser] = useState(null);
   const [accounts, setAccounts] = useState([]);       // loaded from Firestore "accounts"
   const [page, setPage] = useState("home");
@@ -2035,7 +2035,7 @@ function BookingModal({ t, lang, user, mode, data, services, onClose, onSave, on
   const title = mode === "new" ? t("newAppointment") : mode === "edit" ? t("editAppointment") : t("appointmentDetail");
 
   return (
-    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={onClose}>
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto shadow-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-6 py-4 border-b border-stone-100">
           <h2 className="font-display text-xl font-light text-stone-800">{title}</h2>
@@ -2314,7 +2314,7 @@ function ServiceModal({ t, lang, mode, data, onClose, onSave }) {
   const set = (field, value) => setForm((f) => ({ ...f, [field]: value }));
 
   return (
-    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={onClose}>
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl w-full max-w-sm shadow-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-6 py-4 border-b border-stone-100">
           <h2 className="font-display text-xl font-light text-stone-800">{mode === "edit" ? t("editService") : t("addService")}</h2>
