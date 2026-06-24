@@ -1,17 +1,20 @@
-import { useState, useMemo, useEffect } from "react";
+import React, { useState, useMemo, useEffect, useRef } from "react";
 
 import {
   Calendar, Scissors, MapPin, LogOut, Plus, X, Trash2,
   Pencil, ChevronLeft, ChevronRight, Image as ImageIcon, Clock,
-  Eye, Lock, User, Users, Menu, Phone, Database, Send, RefreshCw
+  Eye, EyeOff, Lock, User, Users, Menu, Phone, Database, Send, RefreshCw, ClipboardCopy, FileText
 } from "lucide-react";
 
 import { initializeApp } from "firebase/app";
-import { getFirestore, collection, addDoc, getDocs, query, orderBy, serverTimestamp } from "firebase/firestore";
+import {
+  getFirestore, collection, addDoc, getDocs, getDoc, query, orderBy, serverTimestamp,
+  doc, setDoc, updateDoc, deleteDoc, onSnapshot, writeBatch,
+} from "firebase/firestore";
 
 /* ════════════════════════════════════════════════════
    FIREBASE SETUP
-   ⚠️ 請替換成你自己 Firebase 專案的設定值
+   ⚠️ 請替換成自己 Firebase 專案的設定值
    （Firebase Console → 專案設定 → 一般 → 你的應用程式 → SDK 設定與配置）
    並確認已執行 `npm install firebase`
 ════════════════════════════════════════════════════ */
@@ -39,10 +42,17 @@ const LOGO_ICON_URL =
    DATA / CONSTANTS
 ════════════════════════════════════════════════════ */
 
-const USERS = [
-  { username: "owner", password: "owner123", role: "admin", name: { zh: "Owner（管理員）", en: "Owner (Admin)" } },
-  { username: "staff", password: "staff123", role: "staff", name: { zh: "現場技師", en: "Staff" } },
-];
+/* ════════════════════════════════════════════════════
+   DEFAULT ADMIN SEED — only used if Firestore "accounts" collection is empty.
+   Actual accounts are stored in Firestore and managed by the admin in the backend.
+════════════════════════════════════════════════════ */
+const DEFAULT_ADMIN = {
+  username: "m_beauty_admin",
+  password: "Mb@uty2025!",
+  role: "admin",
+  displayName: "Owner",
+  canApprove: true,
+};
 
 const BRANCHES = [
   {
@@ -186,12 +196,9 @@ const dateStr = (offset) => {
 }; //New End
 
 
-const INITIAL_BOOKINGS = [
-  { id: 1, branch: 0, name: "Test Chen", phone: "0917 ??3 4567", serviceId: 4, staff: "Jenny", date: todayStr(), time: "10:00", note: "" },
-  { id: 2, branch: 0, name: "Test Lim", phone: "0917 9?? 6543", serviceId: 34, staff: "Grace", date: todayStr(), time: "13:30", note: "Light pink please" },
-  { id: 3, branch: 1, name: "Maria Santos", phone: "", serviceId: 7, staff: "Amy", date: dateStr(1), time: "11:00", note: "" },
-  { id: 4, branch: 0, name: "Jane Wu", phone: "", serviceId: 47, staff: "Grace", date: dateStr(-1), time: "15:00", note: "" },
-];
+// Demo bookings removed — bookings are now stored in Firestore ("bookings" collection)
+// and start empty until the admin creates appointments.
+
 
 const DAYS_ZH = ["週日", "週一", "週二", "週三", "週四", "週五", "週六"];
 const DAYS_EN = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
@@ -242,7 +249,12 @@ const T = {
   noMessages: { zh: "目前沒有資料", en: "No messages yet" },
   loadingMessages: { zh: "載入中...", en: "Loading..." },
   refresh: { zh: "重新整理", en: "Refresh" },
+  liveSync: { zh: "即時同步中", en: "Live sync" },
   fetchError: { zh: "讀取失敗，請確認 Firebase 設定是否正確", en: "Failed to load — please check your Firebase config" },
+  syncError: { zh: "雲端同步失敗，請確認網路連線與 Firebase 設定", en: "Cloud sync failed — check your connection and Firebase config" },
+  imageTooLarge: { zh: "圖片檔案太大，無法存入雲端（僅顯示於本機，重新整理後會消失）", en: "Image is too large to sync to the cloud (shown locally only — will be lost on refresh)" },
+  cloudConnecting: { zh: "雲端連線中...", en: "Connecting to cloud..." },
+  timeoutError: { zh: "連線逾時，請重試", en: "Connection timed out — please try again" },
   logout: { zh: "登出", en: "Log Out" },
 
   appointmentCalendar: { zh: "預約行事曆", en: "Appointment Calendar" },
@@ -280,6 +292,11 @@ const T = {
   cancel: { zh: "取消", en: "Cancel" },
   close: { zh: "關閉", en: "Close" },
   delete: { zh: "刪除", en: "Delete" },
+  exportText: { zh: "輸出文字", en: "Export Text" },
+  copyText: { zh: "複製", en: "Copy" },
+  copied: { zh: "已複製！", en: "Copied!" },
+  hideExport: { zh: "收起", en: "Hide" },
+  branchNames: { 0: "Lahug Branch (Salinas Premier)", 1: "Emall Branch (2nd Floor)" },
   required: { zh: "必填", en: "required" },
   fillRequired: { zh: "請填寫所有必填欄位", en: "Please fill in all required fields" },
   savedAppt: { zh: "預約已儲存", en: "Appointment saved" },
@@ -300,6 +317,11 @@ const T = {
   savedService: { zh: "服務已儲存", en: "Service saved" },
   deletedService: { zh: "已刪除", en: "Deleted" },
   confirmDeleteService: { zh: "確定要刪除此服務嗎？", en: "Delete this service?" },
+  hideService: { zh: "隱藏", en: "Hide" },
+  showService: { zh: "顯示", en: "Show" },
+  hiddenBadge: { zh: "已隱藏", en: "Hidden" },
+  hiddenCount: { zh: "項已隱藏", en: "hidden" },
+  viewLarger: { zh: "點擊放大", en: "Click to enlarge" },
   enterServiceName: { zh: "請輸入服務名稱", en: "Please enter a service name" },
 
   gallery: { zh: "服務圖片庫", en: "Service Gallery" },
@@ -322,6 +344,68 @@ const T = {
 
   roleAdmin: { zh: "管理員", en: "Admin" },
   roleStaff: { zh: "現場端", en: "Staff" },
+
+  /* Accounts page */
+  navAccounts: { zh: "帳號管理", en: "Account Management" },
+  accountsTitle: { zh: "帳號<span class='text-rose-400'>管理</span>", en: "Account <span class='text-rose-400'>Management</span>" },
+  accountsDesc: { zh: "新增、刪除或修改員工帳號。帳號資料儲存於 Firestore。", en: "Add, remove or edit staff accounts. All data is stored in Firestore." },
+  accountUsername: { zh: "帳號", en: "Username" },
+  accountPassword: { zh: "密碼", en: "Password" },
+  accountDisplayName: { zh: "顯示名稱", en: "Display Name" },
+  accountRole: { zh: "角色", en: "Role" },
+  accountCanApprove: { zh: "可審核預約", en: "Can Approve Bookings" },
+  addAccount: { zh: "新增帳號", en: "Add Account" },
+  saveAccount: { zh: "儲存", en: "Save" },
+  deleteAccount: { zh: "刪除", en: "Delete" },
+  confirmDeleteAccount: { zh: "確定要刪除此帳號嗎？刪除後無法復原。", en: "Delete this account? This cannot be undone." },
+  accountSaved: { zh: "帳號已儲存", en: "Account saved" },
+  accountDeleted: { zh: "帳號已刪除", en: "Account deleted" },
+  accountUsernameRequired: { zh: "請輸入帳號", en: "Please enter a username" },
+  accountUsernameExists: { zh: "此帳號已存在", en: "Username already taken" },
+  accountPasswordRequired: { zh: "請輸入密碼", en: "Please enter a password" },
+  noAccounts: { zh: "尚無帳號", en: "No accounts yet" },
+
+  /* Home page intro */
+  homeTitle: { zh: "歡迎來到 M Beauty Salon & Nails", en: "Welcome to M Beauty Salon & Nails" },
+  homeIntro: { zh: "我們提供專業美髮、美甲、睫毛、紋繡等服務。\n兩個分店分別位於 Cebu City 的 Salinas Premier（Lahug）和 Emall 2F。\n歡迎預約或直接到店洽詢！", en: "We offer professional hair, nail, eyelash, microblading and more.\nOur two branches are located at Salinas Premier (Lahug) and Emall 2F in Cebu City.\nWalk-ins welcome — book ahead for your preferred time!" },
+  editIntro: { zh: "編輯介紹詞", en: "Edit Introduction" },
+  saveIntro: { zh: "儲存介紹詞", en: "Save Introduction" },
+  savedIntro: { zh: "介紹詞已儲存", en: "Introduction saved" },
+
+  /* Guest booking form */
+  navBookNow: { zh: "立即預約", en: "Book Now" },
+  bookingFormTitle: { zh: "預約<span class='text-rose-400'>表單</span>", en: "Book an <span class='text-rose-400'>Appointment</span>" },
+  bookingFormDesc: { zh: "填寫以下資料提交預約，我們確認後會與您聯繫。", en: "Fill in the form below and we'll confirm your booking shortly." },
+  guestName: { zh: "姓名 *", en: "Name *" },
+  guestPhone: { zh: "電話號碼 *", en: "Phone Number *" },
+  guestSocial: { zh: "FB / IG 帳號", en: "FB / IG Account" },
+  guestBranch: { zh: "分店 *", en: "Branch *" },
+  guestDate: { zh: "預約日期 *", en: "Date *" },
+  guestTime: { zh: "預約時段 *", en: "Time Slot *" },
+  guestContactVia: { zh: "您從哪裡找到我們？", en: "Where did you contact us?" },
+  guestService: { zh: "預計服務項目", en: "Intended Services" },
+  selectServices: { zh: "請選擇服務項目（可複選）", en: "Select services (multiple allowed)" },
+  noServicesSelected: { zh: "請至少選擇一項服務", en: "Please select at least one service" },
+  guestPayment: { zh: "付款方式", en: "Payment Method" },
+  guestSubmit: { zh: "送出預約", en: "Submit Booking" },
+  guestSubmitting: { zh: "送出中...", en: "Submitting..." },
+  guestSubmitSuccess: { zh: "✅ 預約已送出！我們確認後會儘速與您聯繫。", en: "✅ Booking submitted! We'll contact you to confirm shortly." },
+  guestSubmitError: { zh: "送出失敗，請稍後再試。", en: "Submission failed — please try again." },
+  guestFillRequired: { zh: "請填寫所有必填欄位（*）", en: "Please fill in all required fields (*)." },
+
+  /* Pending bookings */
+  navPending: { zh: "待審核預約", en: "Pending Approvals" },
+  pendingTitle: { zh: "待審核<span class='text-rose-400'>預約</span>", en: "Pending <span class='text-rose-400'>Approvals</span>" },
+  pendingEmpty: { zh: "目前沒有待審核的預約", en: "No pending bookings" },
+  approveBtn: { zh: "✅ 同意", en: "✅ Approve" },
+  rejectBtn: { zh: "❌ 拒絕", en: "❌ Reject" },
+  approving: { zh: "審核中...", en: "Processing..." },
+  approvedOk: { zh: "預約已通過並移入正式預約！", en: "Booking approved and added to calendar!" },
+  rejectedOk: { zh: "預約已拒絕", en: "Booking rejected" },
+  allowStaffApprove: { zh: "授權現場端審核預約", en: "Allow Staff to Approve Bookings" },
+  allowStaffApproveDesc: { zh: "開啟後，現場端帳號（canApprove = true）也可審核待審核預約。", en: "When enabled, staff accounts with canApprove = true can also approve pending bookings." },
+  staffApproveEnabled: { zh: "已授權現場端可審核", en: "Staff approval enabled" },
+  staffApproveDisabled: { zh: "已撤銷現場端審核權限", en: "Staff approval disabled" },
 };
 
 /* ════════════════════════════════════════════════════
@@ -355,42 +439,282 @@ function fileToDataUrl(file) {
    MAIN APP
 ════════════════════════════════════════════════════ */
 
+/* ════════════════════════════════════════════════════
+   ERROR BOUNDARY
+   Catches render-time crashes (e.g. unexpected data shape from
+   Firestore) so the user sees a recoverable message instead of
+   a blank white screen.
+════════════════════════════════════════════════════ */
+class ErrorBoundary extends React.Component {
+  constructor(props) {
+    super(props);
+    this.state = { hasError: false, error: null };
+  }
+  static getDerivedStateFromError(error) {
+    return { hasError: true, error };
+  }
+  componentDidCatch(error, info) {
+    console.error("App crashed:", error, info);
+  }
+  render() {
+    if (this.state.hasError) {
+      return (
+        <div style={{ minHeight: "100vh", display: "flex", alignItems: "center", justifyContent: "center", background: "#FAFAF9", fontFamily: "Inter, sans-serif", padding: 24 }}>
+          <div style={{ maxWidth: 420, textAlign: "center" }}>
+            <div style={{ fontSize: 32, marginBottom: 12 }}>⚠️</div>
+            <div style={{ fontSize: 18, fontWeight: 600, color: "#44403C", marginBottom: 8 }}>
+              Something went wrong / 發生錯誤
+            </div>
+            <div style={{ fontSize: 13, color: "#78716C", marginBottom: 20, lineHeight: 1.6 }}>
+              {this.state.error?.message || "Unknown error"}
+            </div>
+            <button
+              onClick={() => window.location.reload()}
+              style={{ background: "#FB7185", color: "white", border: "none", padding: "10px 20px", borderRadius: 8, fontSize: 13, fontWeight: 500, cursor: "pointer" }}
+            >
+              Reload / 重新載入
+            </button>
+          </div>
+        </div>
+      );
+    }
+    return this.props.children;
+  }
+}
+
 export default function App() {
-  const [lang, setLang] = useState("zh");
+  return (
+    <ErrorBoundary>
+      <AppInner />
+    </ErrorBoundary>
+  );
+}
+
+function AppInner() {
+  const [lang, setLang] = useState("en");		// 系統預設文字語言 en英文 zh中文
   const [user, setUser] = useState(null);
-  const [page, setPage] = useState("calendar");
+  const [accounts, setAccounts] = useState([]);       // loaded from Firestore "accounts"
+  const [page, setPage] = useState("home");
   const [sidebarOpen, setSidebarOpen] = useState(false);
   const [toast, setToast] = useState(null);
 
-  // data
-  const [bookings, setBookings] = useState(INITIAL_BOOKINGS);
-  const [services, setServices] = useState(INITIAL_SERVICES);
+  // data — synced with Firestore in real time
+  const [bookings, setBookings] = useState([]);
+  const [pendingBookings, setPendingBookings] = useState([]);
+  const [services, setServices] = useState([]);
   const [gallery, setGallery] = useState([]);
+  const [localGallery, setLocalGallery] = useState([]);
   const [branchInfo, setBranchInfo] = useState(BRANCHES);
-  const [mapImages, setMapImages] = useState({ 0: null, 1: null }); // dataURL per branch
-  const [staffList, setStaffList] = useState(INITIAL_STAFF); // {0:[names], 1:[names]}
+  const [mapImages, setMapImages] = useState({ 0: null, 1: null });
+  const [staffList, setStaffList] = useState(INITIAL_STAFF);
+
+  // site settings
+  const [introText, setIntroText] = useState({ zh: "", en: "" });
+  const [staffApproveEnabled, setStaffApproveEnabled] = useState(false);
 
   // calendar
   const [branchIdx, setBranchIdx] = useState(0);
   const [weekOffset, setWeekOffset] = useState(0);
 
-  // busy state per branch — array of {id, staff, start, until, dateKey}
+  // busy state per branch
   const [busy, setBusy] = useState({ 0: [], 1: [] });
 
   // modals
-  const [bookingModal, setBookingModal] = useState(null); // {mode:'new'|'edit'|'view', data}
-  const [serviceModal, setServiceModal] = useState(null); // {mode:'new'|'edit', data}
+  const [bookingModal, setBookingModal] = useState(null);
+  const [serviceModal, setServiceModal] = useState(null);
 
-  const t = (key) => T[key]?.[lang] ?? key;
+  const t = (key) => {
+    const entry = T[key];
+    if (entry && typeof entry === "object") return entry[lang] ?? entry.zh ?? entry.en ?? key;
+    return entry ?? key;
+  };
 
   const showToast = (msg, type = "default") => {
     setToast({ msg, type });
     setTimeout(() => setToast(null), 2800);
   };
 
+  /* ════════════════════════════════════════════════════
+     FIRESTORE REAL-TIME SYNC
+     每個 collection/doc 都用 onSnapshot 即時監聽，
+     任何裝置寫入後，所有畫面會自動更新；
+     重新整理頁面資料也不會消失。
+  ════════════════════════════════════════════════════ */
+
+  // bookings — collection "bookings"
+  useEffect(() => {
+    const unsub = onSnapshot(
+      collection(db, "bookings"),
+      (snap) => setBookings(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
+      (err) => console.error("bookings sync error:", err)
+    );
+    return unsub;
+  }, []);
+
+  // services — collection "services" (seed with INITIAL_SERVICES if empty)
+  useEffect(() => {
+    const unsub = onSnapshot(
+      collection(db, "services"),
+      async (snap) => {
+        if (snap.empty) {
+          try {
+            const batch = writeBatch(db);
+            INITIAL_SERVICES.forEach((s) => {
+              const { id, ...rest } = s;
+              batch.set(doc(collection(db, "services")), rest);
+            });
+            await batch.commit();
+          } catch (err) {
+            console.error("services seed error:", err);
+          }
+          return; // onSnapshot will fire again once seeded
+        }
+        setServices(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      },
+      (err) => console.error("services sync error:", err)
+    );
+    return unsub;
+  }, []);
+
+  // staff list — doc "settings/staffList" (seed with INITIAL_STAFF if missing)
+  useEffect(() => {
+    const ref = doc(db, "settings", "staffList");
+    const unsub = onSnapshot(
+      ref,
+      async (snap) => {
+        if (!snap.exists()) {
+          try {
+            await setDoc(ref, INITIAL_STAFF);
+          } catch (err) {
+            console.error("staffList seed error:", err);
+          }
+          return;
+        }
+        const data = snap.data();
+        setStaffList({ 0: data["0"] || [], 1: data["1"] || [] });
+      },
+      (err) => console.error("staffList sync error:", err)
+    );
+    return unsub;
+  }, []);
+
+  // branch contact info — doc "settings/branchInfo" (seed from BRANCHES if missing)
+  useEffect(() => {
+    const ref = doc(db, "settings", "branchInfo");
+    const unsub = onSnapshot(
+      ref,
+      async (snap) => {
+        if (!snap.exists()) {
+          try {
+            const seed = {};
+            BRANCHES.forEach((b) => { seed[b.id] = { addr: b.addr, phone: b.phone, hours: b.hours }; });
+            await setDoc(ref, seed);
+          } catch (err) {
+            console.error("branchInfo seed error:", err);
+          }
+          return;
+        }
+        const data = snap.data();
+        setBranchInfo((prev) => prev.map((b) => ({ ...b, ...(data[b.id] || {}) })));
+      },
+      (err) => console.error("branchInfo sync error:", err)
+    );
+    return unsub;
+  }, []);
+
+  // busy status — collection "busyStatus"
+  useEffect(() => {
+    const unsub = onSnapshot(
+      collection(db, "busyStatus"),
+      (snap) => {
+        const grouped = { 0: [], 1: [] };
+        snap.docs.forEach((d) => {
+          const data = d.data();
+          const entry = { id: d.id, staff: data.staff, start: data.start, until: new Date(data.untilISO), dateKey: data.dateKey };
+          if (grouped[data.branch] !== undefined) grouped[data.branch].push(entry);
+        });
+        setBusy(grouped);
+      },
+      (err) => console.error("busyStatus sync error:", err)
+    );
+    return unsub;
+  }, []);
+
+  // map images — doc "settings/mapImages"
+  useEffect(() => {
+    const ref = doc(db, "settings", "mapImages");
+    const unsub = onSnapshot(
+      ref,
+      (snap) => {
+        if (!snap.exists()) return;
+        const data = snap.data();
+        setMapImages({ 0: data["0"] || null, 1: data["1"] || null });
+      },
+      (err) => console.error("mapImages sync error:", err)
+    );
+    return unsub;
+  }, []);
+
+  // gallery images — collection "gallery"
+  useEffect(() => {
+    const unsub = onSnapshot(
+      collection(db, "gallery"),
+      (snap) => setGallery(snap.docs.map((d) => ({ id: d.id, src: d.data().src }))),
+      (err) => console.error("gallery sync error:", err)
+    );
+    return unsub;
+  }, []);
+
+  // accounts — collection "accounts" (seed DEFAULT_ADMIN if empty)
+  useEffect(() => {
+    const unsub = onSnapshot(
+      collection(db, "accounts"),
+      async (snap) => {
+        if (snap.empty) {
+          try {
+            await addDoc(collection(db, "accounts"), DEFAULT_ADMIN);
+          } catch (err) {
+            console.error("accounts seed error:", err);
+          }
+          return;
+        }
+        setAccounts(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+      },
+      (err) => console.error("accounts sync error:", err)
+    );
+    return unsub;
+  }, []);
+
+  // pending bookings — collection "pendingBookings"
+  useEffect(() => {
+    const q = query(collection(db, "pendingBookings"), orderBy("submittedAt", "desc"));
+    const unsub = onSnapshot(
+      q,
+      (snap) => setPendingBookings(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
+      (err) => console.error("pendingBookings sync error:", err)
+    );
+    return unsub;
+  }, []);
+
+  // site settings — doc "settings/site"
+  useEffect(() => {
+    const ref = doc(db, "settings", "site");
+    const unsub = onSnapshot(
+      ref,
+      (snap) => {
+        if (!snap.exists()) return;
+        const data = snap.data();
+        if (data.introZh !== undefined) setIntroText({ zh: data.introZh, en: data.introEn || "" });
+        if (data.staffApproveEnabled !== undefined) setStaffApproveEnabled(data.staffApproveEnabled);
+      },
+      (err) => console.error("siteSettings sync error:", err)
+    );
+    return unsub;
+  }, []);
+
   /* ───── LOGIN HANDLERS ───── */
   const handleLogin = (username, password) => {
-    const found = USERS.find((u) => u.username === username && u.password === password);
+    const found = accounts.find((a) => a.username === username && a.password === password);
     if (found) {
       setUser(found);
       setPage("calendar");
@@ -400,7 +724,7 @@ export default function App() {
   };
   const handleLogout = () => {
     setUser(null);
-    setPage("calendar");
+    setPage("home");
   };
 
   /* ───── BOOKING HANDLERS ───── */
@@ -412,7 +736,7 @@ export default function App() {
         branch: branchIdx,
         name: "",
         phone: "",
-        serviceId: "",
+        serviceIds: [],
         staff: "",
         date: prefillDate || todayStr(),
         time: "10:00",
@@ -427,24 +751,35 @@ export default function App() {
       setBookingModal({ mode: "view", data: { ...b } });
     }
   };
-  const saveBooking = (data) => {
-    if (!data.name || !data.serviceId || !data.date || !data.time) {
+  const saveBooking = async (data) => {
+    if (!data.name || !data.serviceIds?.length || !data.date || !data.time) {
       showToast(t("fillRequired"), "warn");
       return;
     }
-    if (bookingModal.mode === "edit") {
-      setBookings((prev) => prev.map((b) => (b.id === data.id ? { ...data } : b)));
-    } else {
-      setBookings((prev) => [...prev, { ...data, id: Date.now() }]);
+    const { id, ...payload } = data;
+    try {
+      if (bookingModal.mode === "edit" && id) {
+        await updateDoc(doc(db, "bookings", id), payload);
+      } else {
+        await addDoc(collection(db, "bookings"), payload);
+      }
+      setBookingModal(null);
+      showToast(t("savedAppt"), "success");
+    } catch (err) {
+      console.error("saveBooking error:", err);
+      showToast(t("syncError"), "warn");
     }
-    setBookingModal(null);
-    showToast(t("savedAppt"), "success");
   };
-  const deleteBooking = (id) => {
+  const deleteBooking = async (id) => {
     if (!window.confirm(t("confirmDeleteAppt"))) return;
-    setBookings((prev) => prev.filter((b) => b.id !== id));
-    setBookingModal(null);
-    showToast(t("deletedAppt"), "success");
+    try {
+      await deleteDoc(doc(db, "bookings", id));
+      setBookingModal(null);
+      showToast(t("deletedAppt"), "success");
+    } catch (err) {
+      console.error("deleteBooking error:", err);
+      showToast(t("syncError"), "warn");
+    }
   };
 
   /* ───── SERVICE HANDLERS ───── */
@@ -452,80 +787,162 @@ export default function App() {
     setServiceModal({ mode: "new", data: { id: null, cat: cat || "hair", nameZh: "", nameEn: "", priceZh: "", priceEn: "", dur: null } });
   };
   const openEditService = (s) => setServiceModal({ mode: "edit", data: { ...s } });
-  const saveService = (data) => {
+  const saveService = async (data) => {
     if (!data.nameZh.trim()) {
       showToast(t("enterServiceName"), "warn");
       return;
     }
+    const { id, ...rest } = data;
     const obj = {
-      ...data,
+      ...rest,
       nameEn: data.nameEn.trim() || data.nameZh,
       priceZh: data.priceZh.trim(),
       priceEn: data.priceEn.trim() || data.priceZh.trim(),
       dur: data.dur === null || data.dur === "" ? null : Number(data.dur),
     };
-    if (serviceModal.mode === "edit") {
-      setServices((prev) => prev.map((s) => (s.id === obj.id ? obj : s)));
-    } else {
-      setServices((prev) => [...prev, { ...obj, id: Date.now() }]);
+    try {
+      if (serviceModal.mode === "edit" && id) {
+        await updateDoc(doc(db, "services", id), obj);
+      } else {
+        await addDoc(collection(db, "services"), obj);
+      }
+      setServiceModal(null);
+      showToast(t("savedService"), "success");
+    } catch (err) {
+      console.error("saveService error:", err);
+      showToast(t("syncError"), "warn");
     }
-    setServiceModal(null);
-    showToast(t("savedService"), "success");
   };
-  const deleteService = (id) => {
+  const deleteService = async (id) => {
     if (!window.confirm(t("confirmDeleteService"))) return;
-    setServices((prev) => prev.filter((s) => s.id !== id));
-    showToast(t("deletedService"), "success");
+    try {
+      await deleteDoc(doc(db, "services", id));
+      showToast(t("deletedService"), "success");
+    } catch (err) {
+      console.error("deleteService error:", err);
+      showToast(t("syncError"), "warn");
+    }
+  };
+  const toggleServiceHidden = async (s) => {
+    try {
+      await updateDoc(doc(db, "services", s.id), { hidden: !s.hidden });
+    } catch (err) {
+      console.error("toggleServiceHidden error:", err);
+      showToast(t("syncError"), "warn");
+    }
   };
 
   /* ───── GALLERY HANDLERS ───── */
+  const MAX_IMAGE_BYTES = 700 * 1024; // ~700KB safety margin under Firestore's 1MB doc limit
   const handleGalleryUpload = async (e) => {
     const files = Array.from(e.target.files || []);
-    const items = await Promise.all(files.map(async (f) => ({ id: Date.now() + Math.random(), src: await fileToDataUrl(f) })));
-    setGallery((prev) => [...prev, ...items]);
+    for (const file of files) {
+      const dataUrl = await fileToDataUrl(file);
+      if (dataUrl.length > MAX_IMAGE_BYTES) {
+        showToast(t("imageTooLarge"), "warn");
+        setLocalGallery((prev) => [...prev, { id: `local-${Date.now()}-${Math.random()}`, src: dataUrl }]);
+        continue;
+      }
+      try {
+        await addDoc(collection(db, "gallery"), { src: dataUrl });
+      } catch (err) {
+        console.error("gallery upload error:", err);
+        showToast(t("syncError"), "warn");
+      }
+    }
     e.target.value = "";
   };
-  const deleteGalleryImg = (id) => setGallery((prev) => prev.filter((g) => g.id !== id));
+  const deleteGalleryImg = async (id) => {
+    if (String(id).startsWith("local-")) {
+      setLocalGallery((prev) => prev.filter((g) => g.id !== id));
+      return;
+    }
+    try {
+      await deleteDoc(doc(db, "gallery", id));
+    } catch (err) {
+      console.error("gallery delete error:", err);
+      showToast(t("syncError"), "warn");
+    }
+  };
+  const galleryAll = [...gallery, ...localGallery];
 
   /* ───── BUSY HANDLERS ───── */
-  const addBusy = (staffName, minutes) => {
+  const addBusy = async (staffName, minutes) => {
     const now = new Date();
     const start = `${String(now.getHours()).padStart(2, "0")}:${String(now.getMinutes()).padStart(2, "0")}`;
     const until = new Date(now.getTime() + minutes * 60000);
-    const entry = { id: Date.now(), staff: staffName, start, until, dateKey: dKey(now) };
-    setBusy((prev) => ({ ...prev, [branchIdx]: [...prev[branchIdx], entry] }));
-    const durLabel = minutes < 60
-      ? (lang === "zh" ? `${minutes} 分鐘` : `${minutes} min`)
-      : (lang === "zh" ? `${minutes / 60} 小時` : `${minutes / 60} hr`);
-    showToast(
-      lang === "zh" ? `已將 ${staffName} 設為忙碌中，${start} 起 ${durLabel}` : `${staffName} set busy for ${durLabel} from ${start}`,
-      "warn"
-    );
+    try {
+      await addDoc(collection(db, "busyStatus"), {
+        branch: branchIdx,
+        staff: staffName,
+        start,
+        untilISO: until.toISOString(),
+        dateKey: dKey(now),
+      });
+      const durLabel = minutes < 60
+        ? (lang === "zh" ? `${minutes} 分鐘` : `${minutes} min`)
+        : (lang === "zh" ? `${minutes / 60} 小時` : `${minutes / 60} hr`);
+      showToast(
+        lang === "zh" ? `已將 ${staffName} 設為忙碌中，${start} 起 ${durLabel}` : `${staffName} set busy for ${durLabel} from ${start}`,
+        "warn"
+      );
+    } catch (err) {
+      console.error("addBusy error:", err);
+      showToast(t("syncError"), "warn");
+    }
   };
-  const removeBusy = (id) => {
-    setBusy((prev) => ({ ...prev, [branchIdx]: prev[branchIdx].filter((b) => b.id !== id) }));
-    showToast(lang === "zh" ? "已清除忙碌狀態" : "Busy status cleared", "success");
+  const removeBusy = async (id) => {
+    try {
+      await deleteDoc(doc(db, "busyStatus", id));
+      showToast(lang === "zh" ? "已清除忙碌狀態" : "Busy status cleared", "success");
+    } catch (err) {
+      console.error("removeBusy error:", err);
+      showToast(t("syncError"), "warn");
+    }
   };
 
   /* ───── CONTACT HANDLERS ───── */
-  const updateBranchInfo = (idx, field, value) => {
+  const updateBranchInfo = async (idx, field, value) => {
+    // optimistic local update for instant UI feedback
     setBranchInfo((prev) => prev.map((b) => (b.id === idx ? { ...b, [field]: value } : b)));
+    try {
+      await setDoc(doc(db, "settings", "branchInfo"), { [idx]: { [field]: value } }, { merge: true });
+    } catch (err) {
+      console.error("updateBranchInfo error:", err);
+      showToast(t("syncError"), "warn");
+    }
   };
   const handleMapUpload = async (idx, e) => {
     const file = e.target.files?.[0];
     if (!file) return;
     const dataUrl = await fileToDataUrl(file);
-    setMapImages((prev) => ({ ...prev, [idx]: dataUrl }));
-    showToast(t("mapUploaded"), "success");
+    if (dataUrl.length > MAX_IMAGE_BYTES) {
+      showToast(t("imageTooLarge"), "warn");
+      setMapImages((prev) => ({ ...prev, [idx]: dataUrl })); // local-only fallback
+      e.target.value = "";
+      return;
+    }
+    try {
+      await setDoc(doc(db, "settings", "mapImages"), { [idx]: dataUrl }, { merge: true });
+      showToast(t("mapUploaded"), "success");
+    } catch (err) {
+      console.error("handleMapUpload error:", err);
+      showToast(t("syncError"), "warn");
+    }
     e.target.value = "";
   };
-  const removeMapImage = (idx) => {
-    setMapImages((prev) => ({ ...prev, [idx]: null }));
-    showToast(t("mapRemoved"), "success");
+  const removeMapImage = async (idx) => {
+    try {
+      await setDoc(doc(db, "settings", "mapImages"), { [idx]: null }, { merge: true });
+      showToast(t("mapRemoved"), "success");
+    } catch (err) {
+      console.error("removeMapImage error:", err);
+      showToast(t("syncError"), "warn");
+    }
   };
 
   /* ───── STAFF LIST HANDLERS ───── */
-  const addStaff = (branch, name) => {
+  const addStaff = async (branch, name) => {
     const trimmed = name.trim();
     if (!trimmed) {
       showToast(t("staffNameRequired"), "warn");
@@ -535,18 +952,127 @@ export default function App() {
       showToast(t("staffNameExists"), "warn");
       return false;
     }
-    setStaffList((prev) => ({ ...prev, [branch]: [...prev[branch], trimmed] }));
-    showToast(t("staffAdded"), "success");
-    return true;
+    const updated = [...staffList[branch], trimmed];
+    try {
+      await setDoc(doc(db, "settings", "staffList"), { [branch]: updated }, { merge: true });
+      showToast(t("staffAdded"), "success");
+      return true;
+    } catch (err) {
+      console.error("addStaff error:", err);
+      showToast(t("syncError"), "warn");
+      return false;
+    }
   };
-  const removeStaff = (branch, name) => {
-    setStaffList((prev) => ({ ...prev, [branch]: prev[branch].filter((s) => s !== name) }));
-    showToast(t("staffRemoved"), "success");
+  const removeStaff = async (branch, name) => {
+    const updated = staffList[branch].filter((s) => s !== name);
+    try {
+      await setDoc(doc(db, "settings", "staffList"), { [branch]: updated }, { merge: true });
+      showToast(t("staffRemoved"), "success");
+    } catch (err) {
+      console.error("removeStaff error:", err);
+      showToast(t("syncError"), "warn");
+    }
   };
 
-  /* ════════════ NOT LOGGED IN → LOGIN SCREEN ════════════ */
+  /* ───── ACCOUNT MANAGEMENT HANDLERS ───── */
+  const saveAccount = async (data, editingId) => {
+    const trimmed = { ...data, username: data.username.trim(), displayName: data.displayName.trim() };
+    if (!trimmed.username) { showToast(t("accountUsernameRequired"), "warn"); return false; }
+    if (!trimmed.password) { showToast(t("accountPasswordRequired"), "warn"); return false; }
+    const duplicate = accounts.find((a) => a.username === trimmed.username && a.id !== editingId);
+    if (duplicate) { showToast(t("accountUsernameExists"), "warn"); return false; }
+    try {
+      if (editingId) {
+        await setDoc(doc(db, "accounts", editingId), trimmed);
+      } else {
+        await addDoc(collection(db, "accounts"), trimmed);
+      }
+      showToast(t("accountSaved"), "success");
+      return true;
+    } catch (err) {
+      console.error("saveAccount error:", err);
+      showToast(t("syncError"), "warn");
+      return false;
+    }
+  };
+
+  const deleteAccount = async (id) => {
+    if (!window.confirm(t("confirmDeleteAccount"))) return;
+    try {
+      await deleteDoc(doc(db, "accounts", id));
+      showToast(t("accountDeleted"), "success");
+    } catch (err) {
+      console.error("deleteAccount error:", err);
+      showToast(t("syncError"), "warn");
+    }
+  };
+
+  /* ───── PENDING BOOKING HANDLERS ───── */
+  const approveBooking = async (pb) => {
+    try {
+      const { id, ...rest } = pb;
+      await addDoc(collection(db, "bookings"), {
+        ...rest,
+        approvedAt: serverTimestamp(),
+        approvedBy: user.username,
+      });
+      await deleteDoc(doc(db, "pendingBookings", id));
+      showToast(t("approvedOk"), "success");
+    } catch (err) {
+      console.error("approveBooking error:", err);
+      showToast(t("syncError"), "warn");
+    }
+  };
+
+  const rejectBooking = async (id) => {
+    if (!window.confirm(t("rejectBtn") + "?")) return;
+    try {
+      await deleteDoc(doc(db, "pendingBookings", id));
+      showToast(t("rejectedOk"), "success");
+    } catch (err) {
+      console.error("rejectBooking error:", err);
+      showToast(t("syncError"), "warn");
+    }
+  };
+
+  /* ───── SITE SETTINGS HANDLERS ───── */
+  const saveIntro = async (zh, en) => {
+    try {
+      await setDoc(doc(db, "settings", "site"), { introZh: zh, introEn: en, staffApproveEnabled }, { merge: true });
+      showToast(t("savedIntro"), "success");
+    } catch (err) {
+      console.error("saveIntro error:", err);
+      showToast(t("syncError"), "warn");
+    }
+  };
+
+  const toggleStaffApprove = async () => {
+    const next = !staffApproveEnabled;
+    try {
+      await setDoc(doc(db, "settings", "site"), { staffApproveEnabled: next }, { merge: true });
+      showToast(next ? t("staffApproveEnabled") : t("staffApproveDisabled"), "success");
+    } catch (err) {
+      console.error("toggleStaffApprove error:", err);
+      showToast(t("syncError"), "warn");
+    }
+  };
+
+  // Can current user approve pending bookings?
+  const canApprovePending = user?.role === "admin" || (staffApproveEnabled && user?.canApprove);
+
+  /* ════════════ NOT LOGGED IN → HOME ════════════ */
   if (!user) {
-    return <LoginScreen lang={lang} setLang={setLang} t={t} onLogin={handleLogin} />;
+    return (
+      <HomePage
+        lang={lang} setLang={setLang} t={t}
+        introText={introText}
+        onLogin={handleLogin}
+        branchInfo={branchInfo}
+        services={services}
+        gallery={gallery}
+        mapImages={mapImages}
+      />
+    );
   }
 
   /* ════════════ LOGGED IN APP ════════════ */
@@ -589,7 +1115,7 @@ export default function App() {
           <span className={`text-xs font-semibold px-3 py-1 rounded-full ${user.role === "admin" ? "bg-rose-400 text-white" : "bg-amber-400 text-stone-900"}`}>
             {user.role === "admin" ? t("roleAdmin") : t("roleStaff")}
           </span>
-          <span className="hidden md:inline text-sm text-stone-300">{user.name[lang]}</span>
+          <span className="hidden md:inline text-sm text-stone-300">{user.displayName || user.username}</span>
           <button onClick={handleLogout} className="text-stone-300 hover:text-rose-300 transition flex items-center gap-1 text-sm">
             <LogOut size={16} />
             <span className="hidden sm:inline">{t("logout")}</span>
@@ -608,8 +1134,19 @@ export default function App() {
             <SidebarItem icon={<Calendar size={17} />} label={t("navCalendar")} active={page === "calendar"} onClick={() => { setPage("calendar"); setSidebarOpen(false); }} />
             <SidebarItem icon={<Scissors size={17} />} label={t("navServices")} active={page === "services"} onClick={() => { setPage("services"); setSidebarOpen(false); }} />
             <SidebarItem icon={<MapPin size={17} />} label={t("navContact")} active={page === "contact"} onClick={() => { setPage("contact"); setSidebarOpen(false); }} />
+            {canApprovePending && (
+              <SidebarItem
+                icon={<span className="relative"><Eye size={17} />{pendingBookings.length > 0 && <span className="absolute -top-1 -right-1.5 bg-rose-400 text-white text-[9px] font-bold w-3.5 h-3.5 flex items-center justify-center rounded-full">{pendingBookings.length > 9 ? "9+" : pendingBookings.length}</span>}</span>}
+                label={t("navPending")}
+                active={page === "pending"}
+                onClick={() => { setPage("pending"); setSidebarOpen(false); }}
+              />
+            )}
             {user.role === "admin" && (
               <SidebarItem icon={<Users size={17} />} label={t("navStaff")} active={page === "staff"} onClick={() => { setPage("staff"); setSidebarOpen(false); }} />
+            )}
+            {user.role === "admin" && (
+              <SidebarItem icon={<User size={17} />} label={t("navAccounts")} active={page === "accounts"} onClick={() => { setPage("accounts"); setSidebarOpen(false); }} />
             )}
             {user.role === "admin" && (
               <SidebarItem icon={<Database size={17} />} label={t("navFirestore")} active={page === "firestore"} onClick={() => { setPage("firestore"); setSidebarOpen(false); }} />
@@ -638,14 +1175,15 @@ export default function App() {
               addBusy={addBusy} removeBusy={removeBusy}
               staffList={staffList}
               showToast={showToast}
+              introText={introText} saveIntro={saveIntro}
               openNewBooking={openNewBooking} openBookingItem={openBookingItem}
             />
           )}
           {page === "services" && (
             <ServicesPage
               t={t} lang={lang} user={user}
-              services={services} gallery={gallery}
-              openNewService={openNewService} openEditService={openEditService} deleteService={deleteService}
+              services={services} gallery={galleryAll}
+              openNewService={openNewService} openEditService={openEditService} deleteService={deleteService} toggleServiceHidden={toggleServiceHidden}
               handleGalleryUpload={handleGalleryUpload} deleteGalleryImg={deleteGalleryImg}
             />
           )}
@@ -654,6 +1192,14 @@ export default function App() {
           )}
           {page === "staff" && user.role === "admin" && (
             <StaffPage t={t} lang={lang} branchInfo={branchInfo} staffList={staffList} addStaff={addStaff} removeStaff={removeStaff} />
+          )}
+          {page === "pending" && canApprovePending && (
+            <PendingPage t={t} lang={lang} services={services} pendingBookings={pendingBookings} onApprove={approveBooking} onReject={rejectBooking}
+              isAdmin={user.role === "admin"} staffApproveEnabled={staffApproveEnabled} toggleStaffApprove={toggleStaffApprove}
+            />
+          )}
+          {page === "accounts" && user.role === "admin" && (
+            <AccountsPage t={t} lang={lang} accounts={accounts} onSave={saveAccount} onDelete={deleteAccount} />
           )}
           {page === "firestore" && user.role === "admin" && (
             <FirestoreTestPage t={t} lang={lang} showToast={showToast} />
@@ -696,120 +1242,440 @@ export default function App() {
    LOGIN SCREEN
 ════════════════════════════════════════════════════ */
 
-function LoginScreen({ lang, setLang, t, onLogin }) {
+/* ════════════════════════════════════════════════════
+   HOME PAGE (public — not logged in)
+   Shows: intro text, branch info, guest booking form,
+   and a small login widget in the top-right corner.
+════════════════════════════════════════════════════ */
+
+function HomePage({ lang, setLang, t, introText, onLogin, branchInfo, services, gallery, mapImages }) {
+  const [showLogin, setShowLogin] = useState(false);
   const [username, setUsername] = useState("");
   const [password, setPassword] = useState("");
-  const [error, setError] = useState("");
+  const [loginError, setLoginError] = useState("");
+  const [submitted, setSubmitted] = useState(false);
+  const [guestPage, setGuestPage] = useState("home"); // "home" | "services" | "contact"
+
+  const displayIntro = introText?.[lang] || T["homeIntro"]?.[lang] || "";
 
   const submit = () => {
     const ok = onLogin(username.trim(), password);
-    if (!ok) setError(t("loginError"));
+    if (!ok) setLoginError(t("loginError"));
+    else { setShowLogin(false); setLoginError(""); }
   };
+  const keyDown = (e) => { if (e.key === "Enter") submit(); };
 
-  const handleKeyDown = (e) => {
-    if (e.key === "Enter") submit();
-  };
+  const NAV = [
+    { id: "home",     label: lang === "zh" ? "首頁" : "Home" },
+    { id: "services", label: lang === "zh" ? "服務項目" : "Services" },
+    { id: "contact",  label: lang === "zh" ? "聯絡我們" : "Contact" },
+  ];
 
-  const fillDemo = (u, p) => {
-    setUsername(u);
-    setPassword(p);
-    setError("");
-  };
+  // Guest user object — read-only, no admin controls
+  const guestUser = { role: "guest" };
+  const noop = () => {};
 
   return (
-    <div className="min-h-screen bg-stone-50 flex items-center justify-center p-4" style={{ fontFamily: "'Inter', sans-serif" }}>
+    <div className="min-h-screen bg-stone-50" style={{ fontFamily: "'Inter', sans-serif" }}>
       <style>{`
         @import url('https://fonts.googleapis.com/css2?family=Cormorant+Garamond:ital,wght@0,300;0,400;0,600;1,400;1,600&family=Inter:wght@300;400;500;600&display=swap');
         .font-display { font-family: 'Cormorant Garamond', serif; }
       `}</style>
 
-      <div className="absolute top-4 right-4 flex items-center gap-1 bg-white border border-stone-200 rounded-full p-1 shadow-sm">
-        <button onClick={() => setLang("zh")} className={`text-xs font-medium px-3 py-1 rounded-full transition ${lang === "zh" ? "bg-rose-400 text-white" : "text-stone-500"}`}>中文</button>
-        <button onClick={() => setLang("en")} className={`text-xs font-medium px-3 py-1 rounded-full transition ${lang === "en" ? "bg-rose-400 text-white" : "text-stone-500"}`}>EN</button>
-      </div>
+      {/* Top bar */}
+      <div className="fixed top-0 left-0 right-0 z-30 bg-stone-900">
+        <div className="flex items-center justify-between px-5 py-3">
+          {/* Logo */}
+          <button type="button" onClick={() => setGuestPage("home")} className="flex items-center gap-2">
+            <img src={LOGO_ICON_URL} alt="M Beauty" className="w-8 h-8 rounded-full bg-rose-50 object-contain p-1" />
+            <span className="font-display text-white text-lg italic tracking-wide">M <span className="text-amber-400 not-italic">Beauty</span> Salon & Nails</span>
+          </button>
 
-      <div className="w-full max-w-4xl grid md:grid-cols-2 bg-white rounded-2xl shadow-xl overflow-hidden border border-stone-200">
-        {/* Left: branding & branches */}
-        <div className="bg-stone-900 text-white p-8 md:p-10 flex flex-col justify-between">
-          <div>
-            <div className="inline-block bg-rose-50 rounded-2xl p-3 mb-1 shadow-sm">
-              <img src={LOGO_DATA_URL} alt="M Beauty Salon & Nails" className="w-28 h-28 md:w-32 md:h-32" />
+          <div className="flex items-center gap-3">
+            {/* Lang toggle */}
+            <div className="flex items-center gap-1 bg-stone-800 rounded-full p-0.5">
+              <button onClick={() => setLang("zh")} className={`text-xs px-2.5 py-1 rounded-full transition ${lang==="zh" ? "bg-amber-400 text-stone-900 font-medium" : "text-stone-300"}`}>中文</button>
+              <button onClick={() => setLang("en")} className={`text-xs px-2.5 py-1 rounded-full transition ${lang==="en" ? "bg-amber-400 text-stone-900 font-medium" : "text-stone-300"}`}>EN</button>
             </div>
-            <p className="text-stone-400 text-sm mt-2">{t("tagline")}</p>
-          </div>
 
-          <div className="mt-10 space-y-4">
-            <div className="text-[11px] font-semibold tracking-widest text-amber-400 uppercase">{t("ourBranches")}</div>
-            {BRANCHES.map((b) => (
-              <div key={b.id} className="flex items-start gap-3 bg-stone-800 rounded-xl p-4">
-                <span className={`mt-1 w-2.5 h-2.5 rounded-full ${b.dot} flex-shrink-0`} />
-                <div>
-                  <div className="font-medium text-sm text-white">{lang === "zh" ? b.nameZh : b.nameEn} <span className="text-stone-400">({b.sub})</span></div>
-                  <div className="text-xs text-stone-400 mt-1 flex items-center gap-1"><MapPin size={12} />{b.addr}</div>
+            {/* Staff login */}
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setShowLogin((v) => !v)}
+                className="flex items-center gap-1.5 text-xs font-medium border border-stone-600 text-stone-300 hover:border-amber-400 hover:text-amber-400 px-3 py-1.5 rounded-lg transition"
+              >
+                <Lock size={12} /> {lang === "zh" ? "員工登入" : "Staff Login"}
+              </button>
+              {showLogin && (
+                <div className="absolute top-10 right-0 w-72 bg-white rounded-xl shadow-2xl border border-stone-200 p-4 z-50">
+                  <div className="text-sm font-semibold text-stone-700 mb-3">{t("loginTitle")}</div>
+                  <div className="space-y-2">
+                    <input value={username} onChange={(e) => setUsername(e.target.value)} onKeyDown={keyDown} placeholder={t("username")} className="w-full px-3 py-2 text-sm border border-stone-200 rounded-lg bg-stone-50 focus:outline-none focus:border-rose-400 transition" />
+                    <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} onKeyDown={keyDown} placeholder={t("password")} className="w-full px-3 py-2 text-sm border border-stone-200 rounded-lg bg-stone-50 focus:outline-none focus:border-rose-400 transition" />
+                    {loginError && <div className="text-xs text-rose-500">{loginError}</div>}
+                    <button type="button" onClick={submit} className="w-full bg-rose-400 hover:bg-rose-500 text-white text-sm font-medium py-2 rounded-lg transition">{t("loginBtn")}</button>
+                  </div>
                 </div>
-              </div>
-            ))}
+              )}
+            </div>
           </div>
-
-          <div className="mt-10 text-xs text-stone-500">© M Beauty Salon & Nails · Cebu City, PH</div>
         </div>
 
-        {/* Right: login form */}
-        <div className="p-8 md:p-10 flex flex-col justify-center">
-          <h1 className="font-display text-3xl font-light text-stone-800 mb-1">{t("loginTitle")}</h1>
-          <p className="text-sm text-stone-400 mb-6">{t("loginSub")}</p>
-
-          <div className="space-y-4">
-            <div>
-              <label className="text-xs font-medium text-stone-500 mb-1 block">{t("username")}</label>
-              <div className="relative">
-                <User size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" />
-                <input
-                  value={username}
-                  onChange={(e) => setUsername(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                  className="w-full pl-9 pr-3 py-2.5 rounded-lg border border-stone-200 bg-stone-50 text-sm focus:outline-none focus:border-rose-400 focus:bg-white transition"
-                  placeholder="owner / staff"
-                />
-              </div>
-            </div>
-            <div>
-              <label className="text-xs font-medium text-stone-500 mb-1 block">{t("password")}</label>
-              <div className="relative">
-                <Lock size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" />
-                <input
-                  type="password"
-                  value={password}
-                  onChange={(e) => setPassword(e.target.value)}
-                  onKeyDown={handleKeyDown}
-                  className="w-full pl-9 pr-3 py-2.5 rounded-lg border border-stone-200 bg-stone-50 text-sm focus:outline-none focus:border-rose-400 focus:bg-white transition"
-                  placeholder="••••••••"
-                />
-              </div>
-            </div>
-
-            {error && <div className="text-xs text-rose-500 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2">{error}</div>}
-
-            <button type="button" onClick={submit} className="w-full bg-rose-400 hover:bg-rose-500 text-white font-medium text-sm py-2.5 rounded-lg transition">
-              {t("loginBtn")}
+        {/* Tab nav */}
+        <div className="flex items-center gap-1 px-5 pb-2">
+          {NAV.map((nav) => (
+            <button
+              key={nav.id}
+              type="button"
+              onClick={() => setGuestPage(nav.id)}
+              className={`text-xs font-medium px-3 py-1.5 rounded-lg transition ${
+                guestPage === nav.id
+                  ? "bg-rose-400 text-white"
+                  : "text-stone-400 hover:text-white hover:bg-stone-700"
+              }`}
+            >
+              {nav.label}
             </button>
-          </div>
-
-          <div className="mt-7 pt-5 border-t border-stone-100">
-            <div className="text-[11px] font-semibold tracking-widest text-stone-400 uppercase mb-2">{t("demoAccounts")}</div>
-            <div className="space-y-2">
-              <button type="button" onClick={() => fillDemo("owner", "owner123")} className="w-full flex items-center justify-between text-left bg-stone-50 hover:bg-rose-50 border border-stone-200 hover:border-rose-200 rounded-lg px-3 py-2 transition">
-                <span className="text-xs font-medium text-stone-600">{t("ownerAcc")}</span>
-                <span className="text-[11px] text-stone-400">owner / owner123</span>
-              </button>
-              <button type="button" onClick={() => fillDemo("staff", "staff123")} className="w-full flex items-center justify-between text-left bg-stone-50 hover:bg-amber-50 border border-stone-200 hover:border-amber-200 rounded-lg px-3 py-2 transition">
-                <span className="text-xs font-medium text-stone-600">{t("staffAcc")}</span>
-                <span className="text-[11px] text-stone-400">staff / staff123</span>
-              </button>
-            </div>
-          </div>
+          ))}
         </div>
       </div>
+
+      {/* Page content — offset for taller header now (topbar ~56px + tabs ~36px = ~96px) */}
+      <div className="pt-24">
+
+        {/* ── HOME ── */}
+        {guestPage === "home" && (
+          <div className="max-w-4xl mx-auto px-5 pb-16">
+            <div className="text-center py-10">
+              <div className="inline-block bg-white rounded-2xl p-4 shadow-sm mb-5 border border-stone-100">
+                <img src={LOGO_DATA_URL} alt="M Beauty Salon & Nails" className="w-36 h-36 mx-auto" />
+              </div>
+              <h1 className="font-display text-3xl md:text-4xl font-light text-stone-800 mb-4">{t("homeTitle")}</h1>
+              <p className="text-stone-500 text-sm leading-relaxed whitespace-pre-line max-w-xl mx-auto">{displayIntro}</p>
+            </div>
+
+            {/* Branch info cards */}
+            <div className="grid md:grid-cols-2 gap-4 mb-10">
+              {branchInfo.map((b) => (
+                <div key={b.id} className="bg-white rounded-xl border border-stone-200 p-5 shadow-sm">
+                  <div className="flex items-center gap-2 mb-3">
+                    <span className={`w-2.5 h-2.5 rounded-full ${b.dot}`} />
+                    <span className="font-display text-lg font-light text-stone-800">{lang==="zh" ? b.nameZh : b.nameEn}</span>
+                    <span className="text-stone-400 text-sm">({b.sub})</span>
+                  </div>
+                  <div className="text-xs text-stone-500 space-y-1">
+                    <div className="flex gap-1.5"><MapPin size={12} className="text-rose-400 flex-shrink-0 mt-0.5" />{b.addr}</div>
+                    <div className="flex gap-1.5"><Phone size={12} className="text-rose-400 flex-shrink-0 mt-0.5" />{b.phone}</div>
+                    <div className="flex gap-1.5"><Clock size={12} className="text-rose-400 flex-shrink-0 mt-0.5" />{b.hours}</div>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            {/* Booking form */}
+            {submitted ? (
+              <div className="bg-green-50 border border-green-200 rounded-xl p-8 text-center text-green-700 text-sm font-medium">
+                {t("guestSubmitSuccess")}
+                <button type="button" onClick={() => setSubmitted(false)} className="mt-4 block mx-auto text-xs text-stone-400 underline">
+                  {lang==="zh" ? "再填一份" : "Submit another"}
+                </button>
+              </div>
+            ) : (
+              <GuestBookingForm t={t} lang={lang} services={services} branchInfo={branchInfo} onSubmitted={() => setSubmitted(true)} />
+            )}
+          </div>
+        )}
+
+        {/* ── SERVICES (read-only) ── */}
+        {guestPage === "services" && (
+          <div className="max-w-4xl mx-auto px-5 pb-16">
+            <ServicesPage
+              t={t} lang={lang}
+              user={guestUser}
+              services={services}
+              gallery={gallery}
+              openNewService={noop} openEditService={noop} deleteService={noop}
+              toggleServiceHidden={noop} handleGalleryUpload={noop} deleteGalleryImg={noop}
+            />
+          </div>
+        )}
+
+        {/* ── CONTACT (read-only) ── */}
+        {guestPage === "contact" && (
+          <div className="max-w-4xl mx-auto px-5 pb-16">
+            <ContactPage
+              t={t} lang={lang}
+              user={guestUser}
+              branchInfo={branchInfo}
+              updateBranchInfo={noop}
+              showToast={noop}
+              mapImages={mapImages}
+              handleMapUpload={noop}
+              removeMapImage={noop}
+            />
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ════════════════════════════════════════════════════
+   GUEST BOOKING FORM (no login required)
+════════════════════════════════════════════════════ */
+
+const BUSINESS_HOURS = [
+  "09:00","09:30","10:00","10:30","11:00","11:30",
+  "12:00","12:30","13:00","13:30","14:00","14:30",
+  "15:00","15:30","16:00","16:30","17:00","17:30",
+  "18:00","18:30","19:00","19:30","20:00","20:30",
+];
+
+/* ════════════════════════════════════════════════════
+   IMAGE LIGHTBOX
+   Shows any image full-screen on click.
+   Usage: <ClickableImage src={...} alt={...} className={...} />
+════════════════════════════════════════════════════ */
+
+function ImageLightbox({ src, onClose }) {
+  useEffect(() => {
+    const handler = (e) => { if (e.key === "Escape") onClose(); };
+    window.addEventListener("keydown", handler);
+    return () => window.removeEventListener("keydown", handler);
+  }, [onClose]);
+
+  return (
+    <div
+      className="fixed inset-0 z-[200] bg-black/85 flex items-center justify-center p-4"
+      onClick={onClose}
+    >
+      <button
+        onClick={onClose}
+        className="absolute top-4 right-4 text-white/70 hover:text-white bg-black/40 rounded-full p-2 transition"
+      >
+        <X size={22} />
+      </button>
+      <img
+        src={src}
+        alt="enlarged view"
+        className="max-w-full max-h-full rounded-xl shadow-2xl object-contain"
+        onClick={(e) => e.stopPropagation()}
+      />
+    </div>
+  );
+}
+
+function ClickableImage({ src, alt, className, style }) {
+  const [open, setOpen] = useState(false);
+  return (
+    <>
+      <img
+        src={src}
+        alt={alt}
+        className={`cursor-zoom-in ${className || ""}`}
+        style={style}
+        onClick={() => setOpen(true)}
+      />
+      {open && <ImageLightbox src={src} onClose={() => setOpen(false)} />}
+    </>
+  );
+}
+
+/* ════════════════════════════════════════════════════
+   SHARED SERVICE CHECKBOX PICKER
+   Used by both GuestBookingForm and BookingModal.
+   Props:
+     services       — full services array
+     lang           — "zh" | "en"
+     selected       — array of service ids (strings or numbers)
+     onChange(ids)  — called with updated id array
+     readOnly       — boolean, shows tags instead of checkboxes
+════════════════════════════════════════════════════ */
+
+function ServiceCheckboxPicker({ services, lang, selected = [], onChange, readOnly = false }) {
+  // Always filter hidden services from picker and read-only display
+  const visibleServices = services.filter((s) => !s.hidden);
+
+  const toggle = (id) => {
+    const next = selected.includes(id)
+      ? selected.filter((s) => s !== id)
+      : [...selected, id];
+    onChange(next);
+  };
+
+  if (readOnly) {
+    if (!selected.length) return <span className="text-stone-400 text-sm">—</span>;
+    return (
+      <div className="flex flex-wrap gap-1.5">
+        {selected.map((id) => {
+          // For read-only (detail view), show even hidden services if already booked
+          const svc = services.find((s) => s.id === id || s.id === String(id));
+          const cat = SERVICE_CATEGORIES.find((c) => c.id === svc?.cat);
+          if (!svc) return null;
+          return (
+            <span key={id} className={`text-xs font-medium px-2 py-0.5 rounded-full ${cat?.chip || "bg-stone-100 text-stone-500"}`}>
+              {lang === "zh" ? svc.nameZh : svc.nameEn}
+            </span>
+          );
+        })}
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-3">
+      {SERVICE_CATEGORIES.map((cat) => {
+        const items = visibleServices.filter((s) => s.cat === cat.id);
+        if (!items.length) return null;
+        return (
+          <div key={cat.id}>
+            <div className={`text-[10px] font-bold tracking-widest uppercase px-2 py-1 rounded-md mb-1.5 w-fit ${cat.chip}`}>
+              {lang === "zh" ? cat.nameZh : cat.nameEn}
+            </div>
+            <div className="grid grid-cols-1 sm:grid-cols-2 gap-1">
+              {items.map((s) => {
+                const checked = selected.includes(s.id) || selected.includes(String(s.id));
+                return (
+                  <label
+                    key={s.id}
+                    className={`flex items-center gap-2.5 px-3 py-2 rounded-lg border cursor-pointer transition text-sm
+                      ${checked
+                        ? "border-rose-300 bg-rose-50 text-rose-700"
+                        : "border-stone-200 bg-stone-50 text-stone-600 hover:border-rose-200 hover:bg-rose-50/50"
+                      }`}
+                  >
+                    <input
+                      type="checkbox"
+                      checked={checked}
+                      onChange={() => toggle(s.id)}
+                      className="w-3.5 h-3.5 accent-rose-400 flex-shrink-0"
+                    />
+                    <span className="leading-tight">{lang === "zh" ? s.nameZh : s.nameEn}</span>
+                    <span className="ml-auto text-xs font-semibold flex-shrink-0">{lang === "zh" ? s.priceZh : s.priceEn}</span>
+                  </label>
+                );
+              })}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+function GuestBookingForm({ t, lang, services, branchInfo, onSubmitted }) {
+  const [form, setForm] = useState({
+    name: "", phone: "", social: "",
+    branch: "0", date: "", time: "",
+    contactVia: "", serviceIds: [], payment: "",
+  });
+  const [submitting, setSubmitting] = useState(false);
+  const [error, setError] = useState("");
+  const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+
+  const handleSubmit = async () => {
+    if (!form.name.trim() || !form.phone.trim() || !form.date || !form.time) {
+      setError(t("guestFillRequired")); return;
+    }
+    setError("");
+    setSubmitting(true);
+    try {
+      await addDoc(collection(db, "pendingBookings"), {
+        ...form,
+        branch: Number(form.branch),
+        submittedAt: serverTimestamp(),
+        status: "pending",
+      });
+      onSubmitted();
+    } catch (err) {
+      console.error("guest submit error:", err);
+      setError(t("guestSubmitError"));
+    } finally {
+      setSubmitting(false);
+    }
+  };
+
+  const contactOptions = ["FB", "IG", "LINE", lang==="zh" ? "電話" : "Phone number"];
+  const paymentOptions = ["Cash", "GCash", "Credit Card", lang==="zh" ? "禮券 / Gift Check" : "Voucher / Gift Check", lang==="zh" ? "其他" : "Other"];
+
+  return (
+    <div className="bg-white rounded-xl border border-stone-200 shadow-sm p-6">
+      <h2 className="font-display text-2xl font-light text-stone-800 mb-1"
+        dangerouslySetInnerHTML={{ __html: t("bookingFormTitle") }} />
+      <p className="text-sm text-stone-400 mb-5">{t("bookingFormDesc")}</p>
+
+      <div className="grid sm:grid-cols-2 gap-4">
+        <GField label={t("guestName")}>
+          <input value={form.name} onChange={(e) => set("name", e.target.value)} className="ginput" placeholder="Maria Santos" />
+        </GField>
+        <GField label={t("guestPhone")}>
+          <input value={form.phone} onChange={(e) => set("phone", e.target.value)} className="ginput" placeholder="+63 9XX XXX XXXX" />
+        </GField>
+        <GField label={t("guestSocial")}>
+          <input value={form.social} onChange={(e) => set("social", e.target.value)} className="ginput" placeholder="@username" />
+        </GField>
+        <GField label={t("guestBranch")}>
+          <select value={form.branch} onChange={(e) => set("branch", e.target.value)} className="ginput">
+            {branchInfo.map((b) => (
+              <option key={b.id} value={String(b.id)}>{lang==="zh" ? b.nameZh : b.nameEn} ({b.sub})</option>
+            ))}
+          </select>
+        </GField>
+        <GField label={t("guestDate")}>
+          <input type="date" value={form.date} onChange={(e) => set("date", e.target.value)} className="ginput"
+            min={new Date().toISOString().slice(0,10)} />
+        </GField>
+        <GField label={t("guestTime")}>
+          <select value={form.time} onChange={(e) => set("time", e.target.value)} className="ginput">
+            <option value="">—</option>
+            {BUSINESS_HOURS.map((h) => <option key={h} value={h}>{h}</option>)}
+          </select>
+        </GField>
+        <GField label={t("guestContactVia")}>
+          <select value={form.contactVia} onChange={(e) => set("contactVia", e.target.value)} className="ginput">
+            <option value="">—</option>
+            {contactOptions.map((o) => <option key={o} value={o}>{o}</option>)}
+          </select>
+        </GField>
+        <GField label={t("guestPayment")}>
+          <select value={form.payment} onChange={(e) => set("payment", e.target.value)} className="ginput">
+            <option value="">—</option>
+            {paymentOptions.map((o) => <option key={o} value={o}>{o}</option>)}
+          </select>
+        </GField>
+        <GField label={t("guestService")} full>
+          <div className="border border-stone-200 rounded-xl p-3 bg-stone-50 max-h-64 overflow-y-auto">
+            <ServiceCheckboxPicker
+              services={services}
+              lang={lang}
+              selected={form.serviceIds}
+              onChange={(ids) => set("serviceIds", ids)}
+            />
+          </div>
+        </GField>
+      </div>
+
+      {error && <div className="text-xs text-rose-500 mt-3">{error}</div>}
+
+      <button type="button" onClick={handleSubmit} disabled={submitting}
+        className="mt-5 w-full bg-rose-400 hover:bg-rose-500 disabled:opacity-60 text-white font-medium text-sm py-3 rounded-lg transition">
+        {submitting ? t("guestSubmitting") : t("guestSubmit")}
+      </button>
+
+      <style>{`
+        .ginput { width:100%; padding:9px 12px; border:1px solid #E7E5E4; border-radius:8px; font-size:13px; background:#FAFAF9; outline:none; transition:border-color .15s; }
+        .ginput:focus { border-color:#FB7185; background:white; }
+      `}</style>
+    </div>
+  );
+}
+
+function GField({ label, children, full }) {
+  return (
+    <div className={`flex flex-col gap-1.5${full ? " sm:col-span-2" : ""}`}>
+      <label className="text-xs font-medium text-stone-500">{label}</label>
+      {children}
     </div>
   );
 }
@@ -837,7 +1703,8 @@ function SidebarItem({ icon, label, active, onClick }) {
 
 function CalendarPage({
   t, lang, user, branchInfo, branchIdx, setBranchIdx, weekOffset, setWeekOffset,
-  bookings, services, busyList, addBusy, removeBusy, staffList, showToast, openNewBooking, openBookingItem,
+  bookings, services, busyList, addBusy, removeBusy, staffList, showToast,
+  introText, saveIntro, openNewBooking, openBookingItem,
 }) {
   const days = useMemo(() => getWeekDates(weekOffset), [weekOffset]);
   const todayKey = todayStr();
@@ -873,11 +1740,14 @@ function CalendarPage({
         <h1 className="font-display text-2xl md:text-3xl font-light text-stone-800">
           {lang === "zh" ? <>預約<span className="text-rose-400">行事曆</span></> : <>Appointment <span className="text-rose-400">Calendar</span></>}
         </h1>
-        {user.role === "admin" && (
-          <button onClick={() => openNewBooking()} className="flex items-center gap-1.5 bg-rose-400 hover:bg-rose-500 text-white text-sm font-medium px-4 py-2 rounded-lg transition">
-            <Plus size={16} /> {t("newAppointment")}
-          </button>
-        )}
+        <div className="flex items-center gap-2 flex-wrap">
+          {user.role === "admin" && <IntroEditor t={t} lang={lang} introText={introText} onSave={saveIntro} />}
+          {user.role === "admin" && (
+            <button onClick={() => openNewBooking()} className="flex items-center gap-1.5 bg-rose-400 hover:bg-rose-500 text-white text-sm font-medium px-4 py-2 rounded-lg transition">
+              <Plus size={16} /> {t("newAppointment")}
+            </button>
+          )}
+        </div>
       </div>
 
       {/* Branch tabs */}
@@ -998,8 +1868,9 @@ function CalendarPage({
                       </div>
                     ))}
                     {dayBookings.map((b) => {
-                      const svc = serviceLookup(b.serviceId);
-                      const svcCat = SERVICE_CATEGORIES.find((c) => c.id === svc?.cat);
+                      const ids = b.serviceIds || (b.serviceId ? [b.serviceId] : []);
+                      const svcs = ids.map((id) => serviceLookup(id)).filter(Boolean);
+                      const firstCat = svcs[0] ? SERVICE_CATEGORIES.find((c) => c.id === svcs[0].cat) : null;
                       return (
                         <div
                           key={b.id}
@@ -1010,15 +1881,20 @@ function CalendarPage({
                             <Clock size={10} /> {b.time} · {b.staff || "—"}
                           </div>
                           <div className="text-xs font-semibold text-stone-800 group-hover:text-white">{b.name}</div>
-                          <div className="flex items-center gap-1 mt-0.5">
-                            {svcCat && (
-                              <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-full ${svcCat.chip} group-hover:bg-white/20 group-hover:text-white`}>
-                                {lang === "zh" ? svcCat.nameZh : svcCat.nameEn}
+                          <div className="flex flex-wrap gap-1 mt-0.5">
+                            {firstCat && (
+                              <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-full ${firstCat.chip} group-hover:bg-white/20 group-hover:text-white`}>
+                                {lang === "zh" ? firstCat.nameZh : firstCat.nameEn}
                               </span>
                             )}
                             <span className="text-[10px] text-stone-500 group-hover:text-rose-50 truncate">
-                              {svc ? (lang === "zh" ? svc.nameZh : svc.nameEn) : ""}
+                              {svcs.length > 0
+                                ? svcs.map((s) => lang === "zh" ? s.nameZh : s.nameEn).join(", ")
+                                : "—"}
                             </span>
+                            {svcs.length > 1 && (
+                              <span className="text-[9px] text-stone-400 group-hover:text-rose-100">+{svcs.length - 1}</span>
+                            )}
                           </div>
                         </div>
                       );
@@ -1043,15 +1919,55 @@ function formatTime(d) {
 ════════════════════════════════════════════════════ */
 
 function BookingModal({ t, lang, user, mode, data, services, onClose, onSave, onDelete }) {
-  const [form, setForm] = useState(data);
+  const [form, setForm] = useState({ ...data, serviceIds: data.serviceIds || (data.serviceId ? [data.serviceId] : []) });
   const set = (field, value) => setForm((f) => ({ ...f, [field]: value }));
   const readOnly = mode === "view";
+  const [showExport, setShowExport] = useState(false);
+  const [copied, setCopied] = useState(false);
+
+  const BRANCH_LABELS = { 0: "Lahug Branch (Salinas Premier)", 1: "Emall Branch (2nd Floor)" };
+
+  const buildExportText = () => {
+    const svcNames = (form.serviceIds || [])
+      .map((id) => {
+        const s = services.find((x) => x.id === id || x.id === String(id));
+        return s ? s.nameEn : null;
+      })
+      .filter(Boolean);
+
+    const contact = [form.social, form.phone].filter(Boolean).join(" / ") || "—";
+
+    return [
+      "Reservation:",
+      `Date & Time: ${form.date || "—"}  ${form.time || ""}`.trim(),
+      `Services: ${svcNames.length ? svcNames.join(", ") : "—"}`,
+      `Customer: ${form.name || "—"}  |  Contact: ${contact}`,
+      `Branch: ${BRANCH_LABELS[form.branch] ?? form.branch ?? "—"}`,
+    ].join("\n");
+  };
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(buildExportText());
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    } catch {
+      // Fallback for browsers that block clipboard API
+      const el = document.createElement("textarea");
+      el.value = buildExportText();
+      document.body.appendChild(el);
+      el.select();
+      document.execCommand("copy");
+      document.body.removeChild(el);
+      setCopied(true);
+      setTimeout(() => setCopied(false), 2000);
+    }
+  };
 
   const title = mode === "new" ? t("newAppointment") : mode === "edit" ? t("editAppointment") : t("appointmentDetail");
-  const svc = services.find((s) => s.id === Number(form.serviceId)) || services.find((s) => s.id === form.serviceId);
 
   return (
-    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={onClose}>
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto shadow-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-6 py-4 border-b border-stone-100">
           <h2 className="font-display text-xl font-light text-stone-800">{title}</h2>
@@ -1062,7 +1978,10 @@ function BookingModal({ t, lang, user, mode, data, services, onClose, onSave, on
           <div className="px-6 py-4 space-y-0">
             <DetailRow label={t("customerName")} value={form.name} />
             <DetailRow label={t("phone")} value={form.phone || "—"} />
-            <DetailRow label={t("service")} value={svc ? (lang === "zh" ? svc.nameZh : svc.nameEn) : "—"} />
+            <div className="flex gap-3 py-2.5 border-b border-stone-100">
+              <span className="text-xs font-semibold text-stone-400 w-24 flex-shrink-0">{t("service")}</span>
+              <ServiceCheckboxPicker services={services} lang={lang} selected={form.serviceIds || []} onChange={() => {}} readOnly />
+            </div>
             <DetailRow label={t("stylist")} value={form.staff || "—"} />
             <DetailRow label={t("date")} value={form.date} />
             <DetailRow label={t("time")} value={form.time} />
@@ -1076,24 +1995,8 @@ function BookingModal({ t, lang, user, mode, data, services, onClose, onSave, on
             <Field label={t("phone")}>
               <input value={form.phone} onChange={(e) => set("phone", e.target.value)} className="input" placeholder="+63 ..." />
             </Field>
-            <Field label={`${t("service")} *`}>
-              <select value={form.serviceId} onChange={(e) => set("serviceId", Number(e.target.value))} className="input">
-                <option value="">{t("selectService")}</option>
-                {SERVICE_CATEGORIES.map((cat) => {
-                  const items = services.filter((s) => s.cat === cat.id);
-                  if (items.length === 0) return null;
-                  return (
-                    <optgroup key={cat.id} label={lang === "zh" ? cat.nameZh : cat.nameEn}>
-                      {items.map((s) => (
-                        <option key={s.id} value={s.id}>{lang === "zh" ? s.nameZh : s.nameEn}</option>
-                      ))}
-                    </optgroup>
-                  );
-                })}
-              </select>
-            </Field>
             <Field label={t("stylist")}>
-              <input value={form.staff} onChange={(e) => set("staff", e.target.value)} className="input" placeholder="e.g. Jenny" />
+              <input value={form.staff || ""} onChange={(e) => set("staff", e.target.value)} className="input" placeholder="e.g. Jenny" />
             </Field>
             <Field label={`${t("date")} *`}>
               <input type="date" value={form.date} onChange={(e) => set("date", e.target.value)} className="input" />
@@ -1108,15 +2011,62 @@ function BookingModal({ t, lang, user, mode, data, services, onClose, onSave, on
               </select>
             </Field>
             <Field label={t("notes")}>
-              <input value={form.note} onChange={(e) => set("note", e.target.value)} className="input" />
+              <input value={form.note || ""} onChange={(e) => set("note", e.target.value)} className="input" />
+            </Field>
+            <Field label={`${t("service")} *`} full>
+              <div className="border border-stone-200 rounded-xl p-3 bg-stone-50 max-h-72 overflow-y-auto">
+                <ServiceCheckboxPicker
+                  services={services}
+                  lang={lang}
+                  selected={form.serviceIds || []}
+                  onChange={(ids) => set("serviceIds", ids)}
+                />
+              </div>
             </Field>
           </div>
         )}
 
-        <div className="flex items-center gap-2 px-6 py-4 border-t border-stone-100">
+        {/* ── Export Text Panel (admin + edit mode) ── */}
+        {mode === "edit" && user.role === "admin" && showExport && (
+          <div className="mx-6 mb-4 rounded-xl border border-stone-200 bg-stone-50 overflow-hidden">
+            <div className="flex items-center justify-between px-3 py-2 border-b border-stone-200 bg-stone-100">
+              <span className="text-xs font-semibold text-stone-500 flex items-center gap-1.5">
+                <FileText size={13} /> Reservation Summary
+              </span>
+              <button
+                onClick={handleCopy}
+                className={`flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg transition
+                  ${copied
+                    ? "bg-green-400 text-white"
+                    : "bg-rose-400 hover:bg-rose-500 text-white"}`}
+              >
+                <ClipboardCopy size={13} />
+                {copied ? t("copied") : t("copyText")}
+              </button>
+            </div>
+            <pre className="px-4 py-3 text-xs text-stone-700 leading-relaxed whitespace-pre-wrap font-mono select-all">
+              {buildExportText()}
+            </pre>
+          </div>
+        )}
+
+        <div className="flex items-center gap-2 px-6 py-4 border-t border-stone-100 flex-wrap">
           {mode === "edit" && (
-            <button onClick={() => onDelete(form.id)} className="flex items-center gap-1.5 text-rose-500 hover:text-white hover:bg-rose-500 border border-rose-200 hover:border-rose-500 text-sm font-medium px-3 py-2 rounded-lg transition mr-auto">
+            <button onClick={() => onDelete(form.id)} className="flex items-center gap-1.5 text-rose-500 hover:text-white hover:bg-rose-500 border border-rose-200 hover:border-rose-500 text-sm font-medium px-3 py-2 rounded-lg transition">
               <Trash2 size={15} /> {t("delete")}
+            </button>
+          )}
+          {/* Export button — admin + edit only */}
+          {mode === "edit" && user.role === "admin" && (
+            <button
+              onClick={() => setShowExport((v) => !v)}
+              className={`flex items-center gap-1.5 text-sm font-medium px-3 py-2 rounded-lg border transition
+                ${showExport
+                  ? "bg-stone-100 border-stone-300 text-stone-600"
+                  : "border-stone-200 text-stone-500 hover:border-rose-300 hover:text-rose-500"}`}
+            >
+              <FileText size={15} />
+              {showExport ? t("hideExport") : t("exportText")}
             </button>
           )}
           <button onClick={onClose} className="text-sm font-medium text-stone-500 border border-stone-200 hover:border-stone-300 px-4 py-2 rounded-lg transition ml-auto">
@@ -1135,9 +2085,9 @@ function BookingModal({ t, lang, user, mode, data, services, onClose, onSave, on
   );
 }
 
-function Field({ label, children }) {
+function Field({ label, children, full }) {
   return (
-    <div className="flex flex-col gap-1.5">
+    <div className={`flex flex-col gap-1.5${full ? " sm:col-span-2" : ""}`}>
       <label className="text-xs font-medium text-stone-500">{label}</label>
       {children}
     </div>
@@ -1156,7 +2106,7 @@ function DetailRow({ label, value }) {
    SERVICES PAGE
 ════════════════════════════════════════════════════ */
 
-function ServicesPage({ t, lang, user, services, gallery, openNewService, openEditService, deleteService, handleGalleryUpload, deleteGalleryImg }) {
+function ServicesPage({ t, lang, user, services, gallery, openNewService, openEditService, deleteService, toggleServiceHidden, handleGalleryUpload, deleteGalleryImg }) {
   const isAdmin = user.role === "admin";
   return (
     <div>
@@ -1173,10 +2123,13 @@ function ServicesPage({ t, lang, user, services, gallery, openNewService, openEd
         </h3>
         <div className="grid grid-cols-2 sm:grid-cols-4 md:grid-cols-6 gap-3 mb-4">
           {gallery.map((img) => (
-            <div key={img.id} className="relative aspect-square rounded-lg overflow-hidden border border-stone-200">
-              <img src={img.src} alt="service" className="w-full h-full object-cover" />
+            <div key={img.id} className="relative aspect-square rounded-lg overflow-hidden border border-stone-200 group">
+              <ClickableImage src={img.src} alt="service" className="w-full h-full object-cover" />
               {isAdmin && (
-                <button onClick={() => deleteGalleryImg(img.id)} className="absolute top-1 right-1 bg-rose-500/90 text-white rounded-full w-5 h-5 flex items-center justify-center text-[11px]">
+                <button
+                  onClick={() => deleteGalleryImg(img.id)}
+                  className="absolute top-1 right-1 bg-rose-500/90 text-white rounded-full w-5 h-5 flex items-center justify-center text-[11px] opacity-0 group-hover:opacity-100 transition"
+                >
                   <X size={11} />
                 </button>
               )}
@@ -1202,6 +2155,7 @@ function ServicesPage({ t, lang, user, services, gallery, openNewService, openEd
             services={services}
             t={t} lang={lang} isAdmin={isAdmin}
             onEdit={openEditService} onDelete={deleteService}
+            onToggleHidden={toggleServiceHidden}
             onAdd={() => openNewService(cat.id)}
           />
         ))}
@@ -1210,13 +2164,24 @@ function ServicesPage({ t, lang, user, services, gallery, openNewService, openEd
   );
 }
 
-function ServiceList({ category, services, t, lang, isAdmin, onEdit, onDelete, onAdd }) {
-  const items = services.filter((s) => s.cat === category.id);
+function ServiceList({ category, services, t, lang, isAdmin, onEdit, onDelete, onToggleHidden, onAdd }) {
+  const allItems = services.filter((s) => s.cat === category.id);
+  // Non-admins only see visible items; admins see all with a dim on hidden ones
+  const items = isAdmin ? allItems : allItems.filter((s) => !s.hidden);
+  const hiddenCount = allItems.filter((s) => s.hidden).length;
   const note = lang === "zh" ? category.noteZh : category.noteEn;
+
   return (
     <div className="bg-white border border-stone-200 rounded-xl p-5 shadow-sm">
       <div className="flex items-center justify-between pb-2.5 border-b border-stone-100 mb-2">
-        <h3 className="font-display text-lg font-light text-stone-800">{lang === "zh" ? category.nameZh : category.nameEn}</h3>
+        <div className="flex items-center gap-2">
+          <h3 className="font-display text-lg font-light text-stone-800">{lang === "zh" ? category.nameZh : category.nameEn}</h3>
+          {isAdmin && hiddenCount > 0 && (
+            <span className="text-[10px] font-semibold px-2 py-0.5 rounded-full bg-stone-200 text-stone-500">
+              {hiddenCount} {t("hiddenCount")}
+            </span>
+          )}
+        </div>
         {isAdmin && (
           <button onClick={onAdd} className="flex items-center gap-1 text-xs font-medium text-rose-400 hover:text-rose-500 transition">
             <Plus size={14} /> {t("addService")}
@@ -1227,17 +2192,39 @@ function ServiceList({ category, services, t, lang, isAdmin, onEdit, onDelete, o
       {items.length === 0 && <div className="text-sm text-stone-400 py-3">{t("noItems")}</div>}
       <div className="space-y-2">
         {items.map((s) => (
-          <div key={s.id} className="flex items-center justify-between gap-3 bg-stone-50 border border-stone-100 rounded-lg px-3 py-2.5">
+          <div
+            key={s.id}
+            className={`flex items-center justify-between gap-3 border rounded-lg px-3 py-2.5 transition
+              ${s.hidden ? "bg-stone-100 border-stone-200 opacity-60" : "bg-stone-50 border-stone-100"}`}
+          >
             <div className="min-w-0">
-              <div className="text-sm font-medium text-stone-800">{lang === "zh" ? s.nameZh : s.nameEn}</div>
+              <div className="flex items-center gap-1.5">
+                <span className={`text-sm font-medium ${s.hidden ? "text-stone-400 line-through" : "text-stone-800"}`}>
+                  {lang === "zh" ? s.nameZh : s.nameEn}
+                </span>
+                {isAdmin && s.hidden && (
+                  <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-stone-300 text-stone-600">
+                    {t("hiddenBadge")}
+                  </span>
+                )}
+              </div>
               {isAdmin && s.dur != null && (
                 <div className="text-[11px] text-stone-400">({s.dur} {t("min")})</div>
               )}
             </div>
-            <div className="flex items-center gap-2.5 flex-shrink-0">
-              <span className="text-sm font-semibold text-rose-400 whitespace-nowrap">{lang === "zh" ? s.priceZh : s.priceEn}</span>
+            <div className="flex items-center gap-2 flex-shrink-0">
+              <span className={`text-sm font-semibold whitespace-nowrap ${s.hidden ? "text-stone-400" : "text-rose-400"}`}>
+                {lang === "zh" ? s.priceZh : s.priceEn}
+              </span>
               {isAdmin && (
                 <div className="flex gap-1">
+                  <button
+                    onClick={() => onToggleHidden(s)}
+                    title={s.hidden ? t("showService") : t("hideService")}
+                    className={`transition p-1 rounded ${s.hidden ? "text-stone-400 hover:text-green-500" : "text-stone-400 hover:text-amber-500"}`}
+                  >
+                    {s.hidden ? <Eye size={14} /> : <EyeOff size={14} />}
+                  </button>
                   <button onClick={() => onEdit(s)} className="text-stone-400 hover:text-rose-400 transition p-1"><Pencil size={14} /></button>
                   <button onClick={() => onDelete(s.id)} className="text-stone-400 hover:text-rose-500 transition p-1"><Trash2 size={14} /></button>
                 </div>
@@ -1259,7 +2246,7 @@ function ServiceModal({ t, lang, mode, data, onClose, onSave }) {
   const set = (field, value) => setForm((f) => ({ ...f, [field]: value }));
 
   return (
-    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={onClose}>
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
       <div className="bg-white rounded-2xl w-full max-w-sm shadow-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-6 py-4 border-b border-stone-100">
           <h2 className="font-display text-xl font-light text-stone-800">{mode === "edit" ? t("editService") : t("addService")}</h2>
@@ -1352,7 +2339,7 @@ function BranchCard({ t, lang, isAdmin, branch, idx, updateBranchInfo, showToast
 
       {mapImage ? (
         <div className="relative h-40 rounded-lg mb-4 overflow-hidden border border-stone-100 group">
-          <img src={mapImage} alt={`${branch.nameEn} map`} className="w-full h-full object-cover" />
+          <ClickableImage src={mapImage} alt={`${branch.nameEn} map`} className="w-full h-full object-cover" />
           {isAdmin && (
             <div className="absolute inset-0 bg-black/0 group-hover:bg-black/40 transition flex items-center justify-center gap-2 opacity-0 group-hover:opacity-100">
               <label className="text-xs font-medium bg-white/90 hover:bg-white text-stone-700 px-3 py-1.5 rounded-lg cursor-pointer transition">
@@ -1443,8 +2430,8 @@ function StaffPage({ t, lang, branchInfo, staffList, addStaff, removeStaff }) {
 function StaffBranchCard({ t, lang, branch, idx, names, addStaff, removeStaff }) {
   const [name, setName] = useState("");
 
-  const handleAdd = () => {
-    const ok = addStaff(idx, name);
+  const handleAdd = async () => {
+    const ok = await addStaff(idx, name);
     if (ok) setName("");
   };
 
@@ -1502,45 +2489,281 @@ function StaffBranchCard({ t, lang, branch, idx, names, addStaff, removeStaff })
    FIRESTORE TEST PAGE (admin only)
 ════════════════════════════════════════════════════ */
 
+/* ════════════════════════════════════════════════════
+   PENDING BOOKINGS PAGE
+════════════════════════════════════════════════════ */
+
+function PendingPage({ t, lang, services, pendingBookings, onApprove, onReject, isAdmin, staffApproveEnabled, toggleStaffApprove }) {
+  const [processing, setProcessing] = useState(null);
+
+  const approve = async (pb) => {
+    setProcessing(pb.id);
+    await onApprove(pb);
+    setProcessing(null);
+  };
+  const reject = async (id) => {
+    setProcessing(id);
+    await onReject(id);
+    setProcessing(null);
+  };
+
+  const BRANCH_NAMES = { 0: "Lahug (Salinas Premier)", 1: "Emall (2nd Floor)" };
+
+  return (
+    <div>
+      <h1 className="font-display text-2xl md:text-3xl font-light text-stone-800 mb-2"
+        dangerouslySetInnerHTML={{ __html: t("pendingTitle") }} />
+
+      {/* Admin-only toggle for staff approval permission */}
+      {isAdmin && (
+        <div className="flex items-center justify-between bg-white border border-stone-200 rounded-xl px-4 py-3 mb-5 shadow-sm">
+          <div>
+            <div className="text-sm font-medium text-stone-700">{t("allowStaffApprove")}</div>
+            <div className="text-xs text-stone-400 mt-0.5">{t("allowStaffApproveDesc")}</div>
+          </div>
+          <button
+            type="button"
+            onClick={toggleStaffApprove}
+            className={`relative inline-flex w-12 h-6 rounded-full transition ${staffApproveEnabled ? "bg-rose-400" : "bg-stone-200"}`}
+          >
+            <span className={`absolute top-1 w-4 h-4 bg-white rounded-full shadow transition-transform ${staffApproveEnabled ? "translate-x-7" : "translate-x-1"}`} />
+          </button>
+        </div>
+      )}
+
+      {pendingBookings.length === 0 ? (
+        <div className="bg-white border border-stone-200 rounded-xl p-8 text-center text-stone-400 text-sm shadow-sm">
+          {t("pendingEmpty")}
+        </div>
+      ) : (
+        <div className="space-y-3">
+          {pendingBookings.map((pb) => (
+            <div key={pb.id} className="bg-white border border-stone-200 rounded-xl p-4 shadow-sm">
+              <div className="flex items-start justify-between gap-3 flex-wrap">
+                <div className="min-w-0 flex-1">
+                  <div className="font-semibold text-stone-800 text-sm">{pb.name}</div>
+                  <div className="text-xs text-stone-400 mt-0.5">
+                    {BRANCH_NAMES[pb.branch]} · {pb.date} {pb.time}
+                  </div>
+                  <div className="grid sm:grid-cols-2 gap-x-6 gap-y-0.5 mt-2">
+                    {[
+                      [t("phone"), pb.phone],
+                      ["FB/IG", pb.social],
+                      [t("guestContactVia"), pb.contactVia],
+                      [t("guestPayment"), pb.payment],
+                    ].filter(([,v]) => v).map(([label, val]) => (
+                      <div key={label} className="text-xs text-stone-600">
+                        <span className="font-medium text-stone-400">{label}: </span>{val}
+                      </div>
+                    ))}
+                  </div>
+                  {pb.serviceIds?.length > 0 && (
+                    <div className="mt-2">
+                      <span className="text-xs font-medium text-stone-400">{t("service")}: </span>
+                      <ServiceCheckboxPicker services={services} lang={lang} selected={pb.serviceIds} onChange={() => {}} readOnly />
+                    </div>
+                  )}
+                </div>
+                <div className="flex gap-2 flex-shrink-0">
+                  <button
+                    type="button"
+                    disabled={processing === pb.id}
+                    onClick={() => approve(pb)}
+                    className="text-xs font-medium bg-green-100 hover:bg-green-200 text-green-700 px-3 py-1.5 rounded-lg transition disabled:opacity-60"
+                  >
+                    {processing === pb.id ? t("approving") : t("approveBtn")}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={processing === pb.id}
+                    onClick={() => reject(pb.id)}
+                    className="text-xs font-medium bg-rose-50 hover:bg-rose-100 text-rose-500 px-3 py-1.5 rounded-lg transition disabled:opacity-60"
+                  >
+                    {t("rejectBtn")}
+                  </button>
+                </div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ════════════════════════════════════════════════════
+   ACCOUNTS PAGE (admin only)
+════════════════════════════════════════════════════ */
+
+function AccountsPage({ t, lang, accounts, onSave, onDelete }) {
+  const [editing, setEditing] = useState(null);
+  const [form, setForm] = useState({ username: "", password: "", displayName: "", role: "staff", canApprove: false });
+  const setF = (k, v) => setForm((f) => ({ ...f, [k]: v }));
+
+  const openNew = () => {
+    setEditing("new");
+    setForm({ username: "", password: "", displayName: "", role: "staff", canApprove: false });
+  };
+  const openEdit = (a) => {
+    setEditing(a.id);
+    setForm({ username: a.username, password: a.password, displayName: a.displayName || "", role: a.role, canApprove: !!a.canApprove });
+  };
+  const save = async () => {
+    const ok = await onSave(form, editing === "new" ? null : editing);
+    if (ok) setEditing(null);
+  };
+
+  return (
+    <div>
+      <h1 className="font-display text-2xl md:text-3xl font-light text-stone-800 mb-5"
+        dangerouslySetInnerHTML={{ __html: t("accountsTitle") }} />
+
+      {/* Add button */}
+      <div className="flex justify-end mb-4">
+        <button type="button" onClick={openNew} className="flex items-center gap-1.5 bg-rose-400 hover:bg-rose-500 text-white text-sm font-medium px-4 py-2 rounded-lg transition">
+          <Plus size={15} /> {t("addAccount")}
+        </button>
+      </div>
+
+      {/* Inline form */}
+      {editing && (
+        <div className="bg-white border border-rose-200 rounded-xl p-5 mb-5 shadow-sm">
+          <div className="text-sm font-semibold text-stone-700 mb-4">{editing === "new" ? t("addAccount") : t("saveAccount")}</div>
+          <div className="grid sm:grid-cols-2 gap-4">
+            <Field label={t("accountUsername")}>
+              <input value={form.username} onChange={(e) => setF("username", e.target.value)} className="input" disabled={editing !== "new"} />
+            </Field>
+            <Field label={t("accountPassword")}>
+              <input value={form.password} onChange={(e) => setF("password", e.target.value)} className="input" type="text" />
+            </Field>
+            <Field label={t("accountDisplayName")}>
+              <input value={form.displayName} onChange={(e) => setF("displayName", e.target.value)} className="input" />
+            </Field>
+            <Field label={t("accountRole")}>
+              <select value={form.role} onChange={(e) => setF("role", e.target.value)} className="input">
+                <option value="admin">{t("roleAdmin")}</option>
+                <option value="staff">{t("roleStaff")}</option>
+              </select>
+            </Field>
+          </div>
+          <label className="flex items-center gap-2 mt-3 cursor-pointer">
+            <input type="checkbox" checked={form.canApprove} onChange={(e) => setF("canApprove", e.target.checked)} className="w-4 h-4 accent-rose-400" />
+            <span className="text-sm text-stone-600">{t("accountCanApprove")}</span>
+          </label>
+          <div className="flex gap-2 mt-4">
+            <button type="button" onClick={save} className="bg-rose-400 hover:bg-rose-500 text-white text-sm font-medium px-4 py-2 rounded-lg transition">{t("saveAccount")}</button>
+            <button type="button" onClick={() => setEditing(null)} className="text-sm text-stone-500 border border-stone-200 px-4 py-2 rounded-lg transition">{t("cancel")}</button>
+          </div>
+          <style>{`.input { padding:9px 12px; border:1px solid #E7E5E4; border-radius:8px; font-size:13px; background:#FAFAF9; outline:none; width:100%; transition:border-color .15s; } .input:focus { border-color:#FB7185; background:white; } .input:disabled { opacity:0.5; cursor:not-allowed; }`}</style>
+        </div>
+      )}
+
+      {/* Account list */}
+      {accounts.length === 0 ? (
+        <div className="text-sm text-stone-400 text-center py-8">{t("noAccounts")}</div>
+      ) : (
+        <div className="space-y-2">
+          {accounts.map((a) => (
+            <div key={a.id} className="bg-white border border-stone-200 rounded-xl px-4 py-3 shadow-sm flex items-center justify-between gap-3">
+              <div>
+                <div className="text-sm font-semibold text-stone-800">{a.displayName || a.username} <span className="text-stone-400 font-normal">@{a.username}</span></div>
+                <div className="flex items-center gap-2 mt-0.5">
+                  <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${a.role === "admin" ? "bg-rose-100 text-rose-500" : "bg-amber-100 text-amber-600"}`}>
+                    {a.role === "admin" ? t("roleAdmin") : t("roleStaff")}
+                  </span>
+                  {a.canApprove && <span className="text-[10px] text-green-600 bg-green-50 px-2 py-0.5 rounded-full">{t("accountCanApprove")}</span>}
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <button type="button" onClick={() => openEdit(a)} className="text-stone-400 hover:text-rose-400 transition p-1"><Pencil size={15} /></button>
+                <button type="button" onClick={() => onDelete(a.id)} className="text-stone-400 hover:text-rose-500 transition p-1"><Trash2 size={15} /></button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ════════════════════════════════════════════════════
+   ADMIN INTRO EDITOR (lives inside CalendarPage header as a small button)
+   — shown as a separate small section at top of calendar when admin
+════════════════════════════════════════════════════ */
+
+function IntroEditor({ t, lang, introText, onSave }) {
+  const [open, setOpen] = useState(false);
+  const [zh, setZh] = useState(introText?.zh || "");
+  const [en, setEn] = useState(introText?.en || "");
+
+  useEffect(() => {
+    setZh(introText?.zh || "");
+    setEn(introText?.en || "");
+  }, [introText]);
+
+  const save = () => { onSave(zh, en); setOpen(false); };
+
+  if (!open) {
+    return (
+      <button type="button" onClick={() => setOpen(true)}
+        className="flex items-center gap-1.5 text-xs font-medium text-stone-400 hover:text-rose-400 border border-stone-200 hover:border-rose-200 px-3 py-1.5 rounded-lg transition">
+        <Pencil size={12} /> {t("editIntro")}
+      </button>
+    );
+  }
+  return (
+    <div className="bg-white border border-rose-200 rounded-xl p-4 shadow-sm w-full max-w-xl">
+      <div className="text-xs font-semibold text-stone-500 mb-2">{t("editIntro")}</div>
+      <textarea value={zh} onChange={(e) => setZh(e.target.value)} rows={3} className="w-full text-sm border border-stone-200 rounded-lg px-3 py-2 mb-2 focus:outline-none focus:border-rose-400 resize-none" placeholder="中文介紹詞" />
+      <textarea value={en} onChange={(e) => setEn(e.target.value)} rows={3} className="w-full text-sm border border-stone-200 rounded-lg px-3 py-2 mb-3 focus:outline-none focus:border-rose-400 resize-none" placeholder="English introduction" />
+      <div className="flex gap-2">
+        <button type="button" onClick={save} className="bg-rose-400 hover:bg-rose-500 text-white text-xs font-medium px-3 py-1.5 rounded-lg transition">{t("saveIntro")}</button>
+        <button type="button" onClick={() => setOpen(false)} className="text-xs text-stone-500 border border-stone-200 px-3 py-1.5 rounded-lg transition">{t("cancel")}</button>
+      </div>
+    </div>
+  );
+}
+
 function FirestoreTestPage({ t, lang, showToast }) {
   const [text, setText] = useState("");
   const [messages, setMessages] = useState([]);
   const [loading, setLoading] = useState(true);
   const [sending, setSending] = useState(false);
 
-  const fetchMessages = async () => {
-    setLoading(true);
-    try {
-      const q = query(collection(db, "messages"), orderBy("createdAt", "desc"));
-      const snap = await getDocs(q);
-      setMessages(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-    } catch (err) {
-      console.error(err);
-      showToast(t("fetchError"), "warn");
-    } finally {
-      setLoading(false);
-    }
-  };
-
+  // Real-time listener — list updates instantly on any change, no manual refetch needed.
   useEffect(() => {
-    fetchMessages();
+    const q = query(collection(db, "messages"), orderBy("createdAt", "desc"));
+    const unsubscribe = onSnapshot(
+      q,
+      (snap) => {
+        setMessages(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
+        setLoading(false);
+      },
+      (err) => {
+        console.error(err);
+        showToast(t("fetchError"), "warn");
+        setLoading(false);
+      }
+    );
+    return () => unsubscribe();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const handleSend = async () => {
+    if (sending) return; // prevent double-submit
     if (!text.trim()) {
       showToast(t("messageEmpty"), "warn");
       return;
     }
+    const value = text.trim();
     setSending(true);
     try {
       await addDoc(collection(db, "messages"), {
-        text: text.trim(),
+        text: value,
         createdAt: serverTimestamp(),
       });
       setText("");
       showToast(t("messageSaved"), "success");
-      await fetchMessages();
     } catch (err) {
       console.error(err);
       showToast(t("messageError"), "warn");
@@ -1587,17 +2810,13 @@ function FirestoreTestPage({ t, lang, showToast }) {
         </div>
       </div>
 
-      {/* Current messages */}
+      {/* Current messages — synced live from Firestore */}
       <div className="bg-white border border-stone-200 rounded-xl p-5 shadow-sm">
         <div className="flex items-center justify-between pb-2.5 border-b border-stone-100 mb-3">
           <h3 className="font-display text-lg font-light text-stone-800">{t("allMessages")}</h3>
-          <button
-            type="button"
-            onClick={fetchMessages}
-            className="flex items-center gap-1.5 text-xs font-medium text-stone-400 hover:text-rose-400 transition"
-          >
-            <RefreshCw size={13} /> {t("refresh")}
-          </button>
+          <span className="flex items-center gap-1.5 text-xs font-medium text-stone-400">
+            <RefreshCw size={13} className={loading ? "animate-spin" : ""} /> {loading ? t("loadingMessages") : t("liveSync")}
+          </span>
         </div>
         {loading ? (
           <div className="text-sm text-stone-400 py-3">{t("loadingMessages")}</div>

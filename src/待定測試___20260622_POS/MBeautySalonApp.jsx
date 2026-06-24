@@ -431,12 +431,18 @@ const T = {
   guestFillRequired: { zh: "請填寫所有必填欄位（*）", en: "Please fill in all required fields (*)." },
 
   /* Pending bookings */
-  navPending: { zh: "預約清單", en: "Booking List" },
-  pendingTitle: { zh: "預約<span class='text-rose-400'>清單</span>", en: "Booking <span class='text-rose-400'>List</span>" },
-  pendingEmpty: { zh: "目前沒有預約記錄", en: "No bookings yet" },
-  submittedAt: { zh: "填單時間", en: "Submitted" },
-  sourceGuest: { zh: "線上預約", en: "Online" },
-  sourceAdmin: { zh: "現場 / 管理員建立", en: "In-store / Admin" },
+  navPending: { zh: "待審核預約", en: "Pending Approvals" },
+  pendingTitle: { zh: "待審核<span class='text-rose-400'>預約</span>", en: "Pending <span class='text-rose-400'>Approvals</span>" },
+  pendingEmpty: { zh: "目前沒有待審核的預約", en: "No pending bookings" },
+  approveBtn: { zh: "✅ 同意", en: "✅ Approve" },
+  rejectBtn: { zh: "❌ 拒絕", en: "❌ Reject" },
+  approving: { zh: "審核中...", en: "Processing..." },
+  approvedOk: { zh: "預約已通過並移入正式預約！", en: "Booking approved and added to calendar!" },
+  rejectedOk: { zh: "預約已拒絕", en: "Booking rejected" },
+  allowStaffApprove: { zh: "授權現場端審核預約", en: "Allow Staff to Approve Bookings" },
+  allowStaffApproveDesc: { zh: "開啟後，現場端帳號（canApprove = true）也可審核待審核預約。", en: "When enabled, staff accounts with canApprove = true can also approve pending bookings." },
+  staffApproveEnabled: { zh: "已授權現場端可審核", en: "Staff approval enabled" },
+  staffApproveDisabled: { zh: "已撤銷現場端審核權限", en: "Staff approval disabled" },
 };
 
 /* ════════════════════════════════════════════════════
@@ -531,6 +537,7 @@ function AppInner() {
 
   // data — synced with Firestore in real time
   const [bookings, setBookings] = useState([]);
+  const [pendingBookings, setPendingBookings] = useState([]);
   const [services, setServices] = useState([]);
   const [gallery, setGallery] = useState([]);
   const [localGallery, setLocalGallery] = useState([]);
@@ -540,6 +547,7 @@ function AppInner() {
 
   // site settings
   const [introText, setIntroText] = useState({ zh: "", en: "" });
+  const [staffApproveEnabled, setStaffApproveEnabled] = useState(false);
 
   // POS
   const [posRecords, setPosRecords] = useState([]);
@@ -718,6 +726,17 @@ function AppInner() {
     return unsub;
   }, []);
 
+  // pending bookings — collection "pendingBookings"
+  useEffect(() => {
+    const q = query(collection(db, "pendingBookings"), orderBy("submittedAt", "desc"));
+    const unsub = onSnapshot(
+      q,
+      (snap) => setPendingBookings(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
+      (err) => console.error("pendingBookings sync error:", err)
+    );
+    return unsub;
+  }, []);
+
   // site settings — doc "settings/site"
   useEffect(() => {
     const ref = doc(db, "settings", "site");
@@ -727,6 +746,7 @@ function AppInner() {
         if (!snap.exists()) return;
         const data = snap.data();
         if (data.introZh !== undefined) setIntroText({ zh: data.introZh, en: data.introEn || "" });
+        if (data.staffApproveEnabled !== undefined) setStaffApproveEnabled(data.staffApproveEnabled);
       },
       (err) => console.error("siteSettings sync error:", err)
     );
@@ -804,11 +824,7 @@ function AppInner() {
       if (bookingModal.mode === "edit" && id) {
         await updateDoc(doc(db, "bookings", id), payload);
       } else {
-        await addDoc(collection(db, "bookings"), {
-          ...payload,
-          submittedAt: serverTimestamp(),
-          source: "admin",
-        });
+        await addDoc(collection(db, "bookings"), payload);
       }
       setBookingModal(null);
       showToast(t("savedAppt"), "success");
@@ -1054,16 +1070,58 @@ function AppInner() {
     }
   };
 
+  /* ───── PENDING BOOKING HANDLERS ───── */
+  const approveBooking = async (pb) => {
+    try {
+      const { id, ...rest } = pb;
+      await addDoc(collection(db, "bookings"), {
+        ...rest,
+        approvedAt: serverTimestamp(),
+        approvedBy: user.username,
+      });
+      await deleteDoc(doc(db, "pendingBookings", id));
+      showToast(t("approvedOk"), "success");
+    } catch (err) {
+      console.error("approveBooking error:", err);
+      showToast(t("syncError"), "warn");
+    }
+  };
+
+  const rejectBooking = async (id) => {
+    if (!window.confirm(t("rejectBtn") + "?")) return;
+    try {
+      await deleteDoc(doc(db, "pendingBookings", id));
+      showToast(t("rejectedOk"), "success");
+    } catch (err) {
+      console.error("rejectBooking error:", err);
+      showToast(t("syncError"), "warn");
+    }
+  };
+
   /* ───── SITE SETTINGS HANDLERS ───── */
   const saveIntro = async (zh, en) => {
     try {
-      await setDoc(doc(db, "settings", "site"), { introZh: zh, introEn: en }, { merge: true });
+      await setDoc(doc(db, "settings", "site"), { introZh: zh, introEn: en, staffApproveEnabled }, { merge: true });
       showToast(t("savedIntro"), "success");
     } catch (err) {
       console.error("saveIntro error:", err);
       showToast(t("syncError"), "warn");
     }
   };
+
+  const toggleStaffApprove = async () => {
+    const next = !staffApproveEnabled;
+    try {
+      await setDoc(doc(db, "settings", "site"), { staffApproveEnabled: next }, { merge: true });
+      showToast(next ? t("staffApproveEnabled") : t("staffApproveDisabled"), "success");
+    } catch (err) {
+      console.error("toggleStaffApprove error:", err);
+      showToast(t("syncError"), "warn");
+    }
+  };
+
+  // Can current user approve pending bookings?
+  const canApprovePending = user?.role === "admin" || (staffApproveEnabled && user?.canApprove);
 
   /* ───── POS HANDLERS ───── */
   const submitPosRecord = async (record) => {
@@ -1175,28 +1233,14 @@ function AppInner() {
             <SidebarItem icon={<Scissors size={17} />} label={t("navServices")} active={page === "services"} onClick={() => { setPage("services"); setSidebarOpen(false); }} />
             <SidebarItem icon={<MapPin size={17} />} label={t("navContact")} active={page === "contact"} onClick={() => { setPage("contact"); setSidebarOpen(false); }} />
             <SidebarItem icon={<ShoppingCart size={17} />} label={t("navPOS")} active={page === "pos"} onClick={() => { setPage("pos"); setSidebarOpen(false); }} />
-            <SidebarItem
-              icon={(() => {
-                const recentCount = bookings.filter((b) => {
-                  if (!b.submittedAt?.toDate) return false;
-                  const diff = Date.now() - b.submittedAt.toDate().getTime();
-                  return diff < 7 * 24 * 3600 * 1000; // last 7 days
-                }).length;
-                return (
-                  <span className="relative">
-                    <Receipt size={17} />
-                    {recentCount > 0 && (
-                      <span className="absolute -top-1 -right-1.5 bg-rose-400 text-white text-[9px] font-bold w-3.5 h-3.5 flex items-center justify-center rounded-full">
-                        {recentCount > 9 ? "9+" : recentCount}
-                      </span>
-                    )}
-                  </span>
-                );
-              })()}
-              label={t("navPending")}
-              active={page === "pending"}
-              onClick={() => { setPage("pending"); setSidebarOpen(false); }}
-            />
+            {canApprovePending && (
+              <SidebarItem
+                icon={<span className="relative"><Eye size={17} />{pendingBookings.length > 0 && <span className="absolute -top-1 -right-1.5 bg-rose-400 text-white text-[9px] font-bold w-3.5 h-3.5 flex items-center justify-center rounded-full">{pendingBookings.length > 9 ? "9+" : pendingBookings.length}</span>}</span>}
+                label={t("navPending")}
+                active={page === "pending"}
+                onClick={() => { setPage("pending"); setSidebarOpen(false); }}
+              />
+            )}
             {user.role === "admin" && (
               <SidebarItem icon={<Users size={17} />} label={t("navStaff")} active={page === "staff"} onClick={() => { setPage("staff"); setSidebarOpen(false); }} />
             )}
@@ -1248,8 +1292,10 @@ function AppInner() {
           {page === "staff" && user.role === "admin" && (
             <StaffPage t={t} lang={lang} branchInfo={branchInfo} staffList={staffList} addStaff={addStaff} removeStaff={removeStaff} />
           )}
-          {page === "pending" && (
-            <PendingPage t={t} lang={lang} services={services} bookings={bookings} isAdmin={user.role === "admin"} />
+          {page === "pending" && canApprovePending && (
+            <PendingPage t={t} lang={lang} services={services} pendingBookings={pendingBookings} onApprove={approveBooking} onReject={rejectBooking}
+              isAdmin={user.role === "admin"} staffApproveEnabled={staffApproveEnabled} toggleStaffApprove={toggleStaffApprove}
+            />
           )}
           {page === "accounts" && user.role === "admin" && (
             <AccountsPage t={t} lang={lang} accounts={accounts} onSave={saveAccount} onDelete={deleteAccount} />
@@ -1648,12 +1694,11 @@ function GuestBookingForm({ t, lang, services, branchInfo, onSubmitted }) {
     setError("");
     setSubmitting(true);
     try {
-      await addDoc(collection(db, "bookings"), {
+      await addDoc(collection(db, "pendingBookings"), {
         ...form,
         branch: Number(form.branch),
         submittedAt: serverTimestamp(),
-        source: "guest",
-        serviceIds: form.serviceIds || [],
+        status: "pending",
       });
       onSubmitted();
     } catch (err) {
@@ -2561,91 +2606,94 @@ function StaffBranchCard({ t, lang, branch, idx, names, addStaff, removeStaff })
    PENDING BOOKINGS PAGE
 ════════════════════════════════════════════════════ */
 
-function PendingPage({ t, lang, services, bookings, isAdmin }) {
+function PendingPage({ t, lang, services, pendingBookings, onApprove, onReject, isAdmin, staffApproveEnabled, toggleStaffApprove }) {
+  const [processing, setProcessing] = useState(null);
+
+  const approve = async (pb) => {
+    setProcessing(pb.id);
+    await onApprove(pb);
+    setProcessing(null);
+  };
+  const reject = async (id) => {
+    setProcessing(id);
+    await onReject(id);
+    setProcessing(null);
+  };
+
   const BRANCH_NAMES = { 0: "Lahug (Salinas Premier)", 1: "Emall (2nd Floor)" };
-
-  // Sort by submittedAt desc (most recent first), fallback to date field
-  const sorted = [...bookings].sort((a, b) => {
-    const ta = a.submittedAt?.toDate?.()?.getTime?.() ?? 0;
-    const tb = b.submittedAt?.toDate?.()?.getTime?.() ?? 0;
-    return tb - ta;
-  });
-
-  const formatSubmittedAt = (ts) => {
-    if (!ts?.toDate) return "—";
-    return ts.toDate().toLocaleString(lang === "zh" ? "zh-TW" : "en-US", {
-      month: "short", day: "numeric", year: "numeric",
-      hour: "2-digit", minute: "2-digit",
-    });
-  };
-
-  const sourceLabel = (source) => {
-    if (source === "guest") return t("sourceGuest");
-    return t("sourceAdmin");
-  };
-
-  const sourceBadge = (source) => source === "guest"
-    ? "bg-sky-100 text-sky-600"
-    : "bg-stone-100 text-stone-500";
 
   return (
     <div>
-      <h1
-        className="font-display text-2xl md:text-3xl font-light text-stone-800 mb-5"
-        dangerouslySetInnerHTML={{ __html: t("pendingTitle") }}
-      />
+      <h1 className="font-display text-2xl md:text-3xl font-light text-stone-800 mb-2"
+        dangerouslySetInnerHTML={{ __html: t("pendingTitle") }} />
 
-      {sorted.length === 0 ? (
+      {/* Admin-only toggle for staff approval permission */}
+      {isAdmin && (
+        <div className="flex items-center justify-between bg-white border border-stone-200 rounded-xl px-4 py-3 mb-5 shadow-sm">
+          <div>
+            <div className="text-sm font-medium text-stone-700">{t("allowStaffApprove")}</div>
+            <div className="text-xs text-stone-400 mt-0.5">{t("allowStaffApproveDesc")}</div>
+          </div>
+          <button
+            type="button"
+            onClick={toggleStaffApprove}
+            className={`relative inline-flex w-12 h-6 rounded-full transition ${staffApproveEnabled ? "bg-rose-400" : "bg-stone-200"}`}
+          >
+            <span className={`absolute top-1 w-4 h-4 bg-white rounded-full shadow transition-transform ${staffApproveEnabled ? "translate-x-7" : "translate-x-1"}`} />
+          </button>
+        </div>
+      )}
+
+      {pendingBookings.length === 0 ? (
         <div className="bg-white border border-stone-200 rounded-xl p-8 text-center text-stone-400 text-sm shadow-sm">
           {t("pendingEmpty")}
         </div>
       ) : (
         <div className="space-y-3">
-          {sorted.map((b) => (
-            <div key={b.id} className="bg-white border border-stone-200 rounded-xl p-4 shadow-sm">
+          {pendingBookings.map((pb) => (
+            <div key={pb.id} className="bg-white border border-stone-200 rounded-xl p-4 shadow-sm">
               <div className="flex items-start justify-between gap-3 flex-wrap">
                 <div className="min-w-0 flex-1">
-                  {/* Name + source badge */}
-                  <div className="flex items-center gap-2 flex-wrap mb-0.5">
-                    <span className="font-semibold text-stone-800 text-sm">{b.name}</span>
-                    <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${sourceBadge(b.source)}`}>
-                      {sourceLabel(b.source)}
-                    </span>
+                  <div className="font-semibold text-stone-800 text-sm">{pb.name}</div>
+                  <div className="text-xs text-stone-400 mt-0.5">
+                    {BRANCH_NAMES[pb.branch]} · {pb.date} {pb.time}
                   </div>
-
-                  {/* Date/time & branch */}
-                  <div className="text-xs text-stone-500 mb-2">
-                    {BRANCH_NAMES[b.branch] ?? "—"} · {b.date} {b.time}
-                  </div>
-
-                  {/* Details grid */}
-                  <div className="grid sm:grid-cols-2 gap-x-6 gap-y-0.5">
+                  <div className="grid sm:grid-cols-2 gap-x-6 gap-y-0.5 mt-2">
                     {[
-                      [t("phone"), b.phone],
-                      ["FB/IG", b.social],
-                      [t("guestContactVia"), b.contactVia],
-                      [t("guestPayment"), b.payment],
-                      [t("stylist"), b.staff],
-                    ].filter(([, v]) => v).map(([label, val]) => (
+                      [t("phone"), pb.phone],
+                      ["FB/IG", pb.social],
+                      [t("guestContactVia"), pb.contactVia],
+                      [t("guestPayment"), pb.payment],
+                    ].filter(([,v]) => v).map(([label, val]) => (
                       <div key={label} className="text-xs text-stone-600">
                         <span className="font-medium text-stone-400">{label}: </span>{val}
                       </div>
                     ))}
                   </div>
-
-                  {/* Services */}
-                  {b.serviceIds?.length > 0 && (
+                  {pb.serviceIds?.length > 0 && (
                     <div className="mt-2">
                       <span className="text-xs font-medium text-stone-400">{t("service")}: </span>
-                      <ServiceCheckboxPicker services={services} lang={lang} selected={b.serviceIds} onChange={() => {}} readOnly />
+                      <ServiceCheckboxPicker services={services} lang={lang} selected={pb.serviceIds} onChange={() => {}} readOnly />
                     </div>
                   )}
-
-                  {/* Submitted at */}
-                  <div className="text-[11px] text-stone-400 mt-2 flex items-center gap-1">
-                    <Clock size={11} />
-                    {t("submittedAt")}: {formatSubmittedAt(b.submittedAt)}
-                  </div>
+                </div>
+                <div className="flex gap-2 flex-shrink-0">
+                  <button
+                    type="button"
+                    disabled={processing === pb.id}
+                    onClick={() => approve(pb)}
+                    className="text-xs font-medium bg-green-100 hover:bg-green-200 text-green-700 px-3 py-1.5 rounded-lg transition disabled:opacity-60"
+                  >
+                    {processing === pb.id ? t("approving") : t("approveBtn")}
+                  </button>
+                  <button
+                    type="button"
+                    disabled={processing === pb.id}
+                    onClick={() => reject(pb.id)}
+                    className="text-xs font-medium bg-rose-50 hover:bg-rose-100 text-rose-500 px-3 py-1.5 rounded-lg transition disabled:opacity-60"
+                  >
+                    {t("rejectBtn")}
+                  </button>
                 </div>
               </div>
             </div>
