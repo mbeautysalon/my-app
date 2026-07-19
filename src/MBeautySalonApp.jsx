@@ -5,7 +5,7 @@ import {
   Pencil, ChevronLeft, ChevronRight, Image as ImageIcon, Clock,
   Eye, EyeOff, Lock, User, Users, Menu, Phone, Database, Send, RefreshCw, ClipboardCopy, FileText,
   ShoppingCart, Receipt, DollarSign, TrendingUp, Settings, ChevronDown, ChevronUp, BarChart2,
-  Package, Search, Upload, CheckSquare, Square, CheckCircle2, ClipboardList, ArrowLeft
+  Package, Search, Upload, CheckSquare, Square, CheckCircle2, ClipboardList, ArrowLeft, Undo2
 } from "lucide-react";
 
 import { initializeApp } from "firebase/app";
@@ -238,7 +238,6 @@ const T = {
   staffAdded: { zh: "技師已新增", en: "Stylist added" },
   staffRemoved: { zh: "技師已移除", en: "Stylist removed" },
 
-  navFirestore: { zh: "Firestore 測試", en: "Firestore Test" },
   navPOS: { zh: "POS 收銀", en: "POS" },
   posTitle: { zh: "POS 收銀系統", en: "Point of Sale" },
   posStylist: { zh: "技師", en: "Stylist" },
@@ -385,6 +384,13 @@ const T = {
 
   /* Accounts page */
   navAccounts: { zh: "帳號管理", en: "Account Management" },
+  navSettings: { zh: "設定", en: "Settings" },
+  settingsTitle: { zh: "設定", en: "Settings" },
+  settingsIntroSection: { zh: "首頁介紹文字", en: "Homepage Intro Text" },
+  settingsIntroPreview: { zh: "目前顯示內容預覽", en: "Current Preview" },
+  settingsIntroEditZh: { zh: "中文內容", en: "Chinese Content" },
+  settingsIntroEditEn: { zh: "英文內容", en: "English Content" },
+  settingsIntroSaved: { zh: "已儲存首頁介紹文字", en: "Homepage intro text saved" },
   accountsTitle: { zh: "帳號<span class='text-rose-400'>管理</span>", en: "Account <span class='text-rose-400'>Management</span>" },
   accountsDesc: { zh: "新增、刪除或修改員工帳號。帳號資料儲存於 Firestore。", en: "Add, remove or edit staff accounts. All data is stored in Firestore." },
   accountUsername: { zh: "帳號", en: "Username" },
@@ -461,8 +467,14 @@ const T = {
   inventoryDeleted: { zh: "已刪除", en: "Deleted" },
   inventoryConfirmDelete: { zh: "確定要刪除此品項嗎？", en: "Delete this item?" },
   inventoryEmpty: { zh: "尚無庫存資料，請點選「貼上更新」批次匯入", en: 'No inventory yet — use "Paste Update" to import' },
-  inventoryPasteUpdate: { zh: "貼上更新", en: "Paste Update" },
-  inventoryPasteTitle: { zh: "從 Excel 貼上更新庫存", en: "Paste Update from Excel" },
+  inventoryPasteUpdate: { zh: "批次新增", en: "Batch Add" },
+  inventoryPasteTitle: { zh: "批次新增／更新庫存", en: "Batch Add / Update Inventory" },
+  inventoryUndo: { zh: "復原上一步", en: "Undo Last Change" },
+  inventoryPastePreviewTitle: { zh: "預覽此次異動內容", en: "Preview Changes" },
+  inventoryPasteBack: { zh: "返回修改", en: "Back to Edit" },
+  inventoryPasteStatusNew: { zh: "新增", en: "New" },
+  inventoryPasteStatusUpdate: { zh: "更新", en: "Update" },
+  inventoryPasteStatusSkip: { zh: "略過（同編號跨品牌）", en: "Skipped (dup. item no. across brands)" },
   inventoryPasteDesc: { zh: "從 Excel 複製兩欄資料（品項編號、數量）後直接貼在下方，系統會自動比對：已存在的品項會更新數量、沒出現過的品項會自動新增。", en: "Copy two columns from Excel (Item No., Qty) and paste below. Existing items will be updated and new ones added automatically." },
   inventoryPasteMatched: { zh: "可匯入筆數", en: "Rows to import" },
   inventoryPasteInvalid: { zh: "無法辨識", en: "Unrecognized" },
@@ -514,6 +526,7 @@ const T = {
   inventorySortDye: { zh: "染劑順序", en: "Dye Order" },
   inventorySortStock: { zh: "庫存量", en: "Stock Level" },
   inventorySortItemNo: { zh: "品項編號", en: "Item No." },
+  inventorySortBrand: { zh: "依品牌觀看", en: "By Brand" },
   inventorySortRecent: { zh: "最近更新", en: "Recently Updated" },
   inventoryDoubleTone: { zh: "加強色（雙色調）", en: "Double-tone / Intensifiers" },
   inventoryOtherItems: { zh: "其他品項", en: "Other Items" },
@@ -1102,6 +1115,40 @@ function AppInner() {
     }
   };
 
+  // Undo stack for inventory changes — each entry is { label, changes:[{id, before}] }.
+  // `before` is the full prior field-set to restore on undo, or null if the
+  // doc didn't exist before the action (so undo deletes it). This uniformly
+  // covers create / update / delete / bulk operations with one mechanism.
+  const [inventoryUndoStack, setInventoryUndoStack] = useState([]);
+  const pushInventoryUndo = (action) => setInventoryUndoStack((prev) => [...prev.slice(-19), action]);
+  const snapshotInvItem = (item) => ({ itemNo: item.itemNo, brand: item.brand || "", category: item.category || "", qty: Number(item.qty) || 0 });
+
+  const performInventoryUndo = async (action) => {
+    try {
+      for (let i = 0; i < action.changes.length; i += 400) {
+        const chunk = action.changes.slice(i, i + 400);
+        const batch = writeBatch(db);
+        chunk.forEach((c) => {
+          if (c.before === null) batch.delete(doc(db, "inventory", c.id));
+          else batch.set(doc(db, "inventory", c.id), { ...c.before, updatedAt: serverTimestamp() });
+        });
+        await batch.commit();
+      }
+      showToast(lang === "zh" ? `已復原：${action.label}` : `Undone: ${action.label}`, "success");
+    } catch (err) {
+      console.error("performInventoryUndo error:", err);
+      showToast(t("syncError"), "warn");
+    }
+  };
+
+  const undoLastInventoryChange = () => {
+    setInventoryUndoStack((prev) => {
+      if (!prev.length) return prev;
+      performInventoryUndo(prev[prev.length - 1]);
+      return prev.slice(0, -1);
+    });
+  };
+
   /* ───── INVENTORY HANDLERS ─────
      Architecture note:
      - "inventory" holds only the CURRENT snapshot per item (fast to read/render
@@ -1111,7 +1158,11 @@ function AppInner() {
        "inventoryMovements" with qtyBefore/qtyAfter/delta + a plain-string
        dateKey ("YYYY-MM-DD") and monthKey ("YYYY-MM"). For usage entries the
        dateKey is whatever consumption date the admin typed in — NOT
-       necessarily today — so historical entry is supported.
+       necessarily today — so historical entry is supported. Undo does NOT
+       remove movement log entries, so the audit trail stays intact even
+       after a change is reverted.
+     - Every mutating handler below captures the pre-change state and pushes
+       one entry onto inventoryUndoStack so "復原上一步" can reverse it.
 
      IDENTITY FIX: item numbers are NOT globally unique on their own — the
      same code (e.g. a hair-dye shade like "6.1") can exist under different
@@ -1191,6 +1242,10 @@ function AppInner() {
         itemId: targetId, itemNo: trimmedItemNo, brand: finalBrand, category: finalCategory, qtyBefore, qtyAfter,
         changeType: existing ? changeType : "new_item",
       });
+      pushInventoryUndo({
+        label: existing ? (lang === "zh" ? `編輯 ${trimmedItemNo}` : `Edit ${trimmedItemNo}`) : (lang === "zh" ? `新增 ${trimmedItemNo}` : `Add ${trimmedItemNo}`),
+        changes: [{ id: targetId, before: existing ? snapshotInvItem(existing) : null }],
+      });
       showToast(t("inventorySaved"), "success");
     } catch (err) {
       console.error("saveInventoryItem error:", err);
@@ -1200,8 +1255,15 @@ function AppInner() {
 
   const deleteInventoryItem = async (id) => {
     if (!window.confirm(t("inventoryConfirmDelete"))) return;
+    const existing = inventory.find((i) => i.id === id);
     try {
       await deleteDoc(doc(db, "inventory", id));
+      if (existing) {
+        pushInventoryUndo({
+          label: lang === "zh" ? `刪除 ${existing.itemNo}` : `Delete ${existing.itemNo}`,
+          changes: [{ id, before: snapshotInvItem(existing) }],
+        });
+      }
       showToast(t("inventoryDeleted"), "success");
     } catch (err) {
       console.error("deleteInventoryItem error:", err);
@@ -1209,7 +1271,7 @@ function AppInner() {
     }
   };
 
-  // Bulk upsert from an Excel paste: rows = [{ itemNo, qty, brand?, category? }, ...].
+  // Bulk upsert from an Excel paste ("批次新增"): rows = [{ itemNo, qty, brand?, category? }, ...].
   // Matching rule (fixes the "same item no. across brands" bug):
   //   - Row HAS a brand column (3/4-col paste) → match by exact (brand, itemNo).
   //   - Row has NO brand column (plain 2-col paste) → only auto-match if
@@ -1217,13 +1279,16 @@ function AppInner() {
   //     brands. If the same itemNo exists under 2+ different brands, we
   //     can't safely guess which one you mean, so that row is SKIPPED and
   //     counted separately — re-paste it with the brand column to resolve.
-  // Every written row also gets a movement log entry. Firestore batches
-  // are capped at 500 ops and each row writes 2 ops, so we chunk at 200.
+  // Every written row also gets a movement log entry, and the whole batch
+  // is pushed as ONE undo action (undo reverts the entire import in one go).
+  // Firestore batches are capped at 500 ops and each row writes 2 ops, so
+  // we chunk at 200.
   const bulkUpsertInventory = async (rows) => {
     if (!rows || !rows.length) return;
     try {
       const today = todayStr();
       let updated = 0, added = 0, skipped = 0;
+      const undoChanges = [];
       for (let i = 0; i < rows.length; i += 200) {
         const chunk = rows.slice(i, i + 200);
         const batch = writeBatch(db);
@@ -1245,6 +1310,7 @@ function AppInner() {
           const brand = hasBrandColumn ? r.brand : (prev?.brand || "");
           const category = r.category !== undefined && r.category !== "" ? r.category : (prev?.category || "");
           if (prev) updated++; else added++;
+          undoChanges.push({ id, before: prev ? snapshotInvItem(prev) : null });
           batch.set(
             doc(db, "inventory", id),
             { itemNo, brand, category, qty: qtyAfter, updatedAt: serverTimestamp() },
@@ -1259,6 +1325,12 @@ function AppInner() {
           });
         });
         await batch.commit();
+      }
+      if (undoChanges.length) {
+        pushInventoryUndo({
+          label: lang === "zh" ? `批次新增 ${undoChanges.length} 筆` : `Batch add (${undoChanges.length} row(s))`,
+          changes: undoChanges,
+        });
       }
       const skippedNote = skipped > 0
         ? (lang === "zh" ? `、略過 ${skipped} 項（同編號跨品牌，請補上品牌欄再貼一次）` : `, skipped ${skipped} (same item no. across brands — re-paste with a brand column)`)
@@ -1286,10 +1358,12 @@ function AppInner() {
 
   // Bulk brand edit — used when multiple cards are selected and the admin
   // applies one brand to all of them in one go. Only touches "brand"
-  // (qty is untouched, so no movement log entry).
+  // (qty is untouched, so no movement log entry) — but the whole thing is
+  // still one undoable step.
   const bulkUpdateInventoryBrand = async (ids, brand) => {
     if (!ids || !ids.length) return;
     const trimmedBrand = (brand || "").trim();
+    const beforeMap = new Map(inventory.filter((i) => ids.includes(i.id)).map((i) => [i.id, snapshotInvItem(i)]));
     try {
       for (let i = 0; i < ids.length; i += 400) {
         const chunk = ids.slice(i, i + 400);
@@ -1299,6 +1373,10 @@ function AppInner() {
         });
         await batch.commit();
       }
+      pushInventoryUndo({
+        label: lang === "zh" ? `批次改品牌（${ids.length} 項）` : `Set brand (${ids.length} item(s))`,
+        changes: ids.map((id) => ({ id, before: beforeMap.get(id) || null })),
+      });
       showToast(
         lang === "zh" ? `已將 ${ids.length} 項品牌更新為「${trimmedBrand || t("inventoryNoBrand")}」` : `Set brand to "${trimmedBrand || t("inventoryNoBrand")}" for ${ids.length} item(s)`,
         "success"
@@ -1314,6 +1392,7 @@ function AppInner() {
   const bulkUpdateInventoryCategory = async (ids, category) => {
     if (!ids || !ids.length) return;
     const trimmedCategory = (category || "").trim();
+    const beforeMap = new Map(inventory.filter((i) => ids.includes(i.id)).map((i) => [i.id, snapshotInvItem(i)]));
     try {
       for (let i = 0; i < ids.length; i += 400) {
         const chunk = ids.slice(i, i + 400);
@@ -1323,6 +1402,10 @@ function AppInner() {
         });
         await batch.commit();
       }
+      pushInventoryUndo({
+        label: lang === "zh" ? `批次改種類（${ids.length} 項）` : `Set category (${ids.length} item(s))`,
+        changes: ids.map((id) => ({ id, before: beforeMap.get(id) || null })),
+      });
       showToast(
         lang === "zh" ? `已將 ${ids.length} 項種類更新為「${trimmedCategory || t("inventoryNoCategory")}」` : `Set category to "${trimmedCategory || t("inventoryNoCategory")}" for ${ids.length} item(s)`,
         "success"
@@ -1337,6 +1420,7 @@ function AppInner() {
   const bulkDeleteInventoryItems = async (ids) => {
     if (!ids || !ids.length) return;
     if (!window.confirm(t("inventoryConfirmBulkDelete"))) return;
+    const beforeMap = new Map(inventory.filter((i) => ids.includes(i.id)).map((i) => [i.id, snapshotInvItem(i)]));
     try {
       for (let i = 0; i < ids.length; i += 400) {
         const chunk = ids.slice(i, i + 400);
@@ -1344,6 +1428,10 @@ function AppInner() {
         chunk.forEach((id) => batch.delete(doc(db, "inventory", id)));
         await batch.commit();
       }
+      pushInventoryUndo({
+        label: lang === "zh" ? `批次刪除（${ids.length} 項）` : `Delete (${ids.length} item(s))`,
+        changes: ids.map((id) => ({ id, before: beforeMap.get(id) || null })),
+      });
       showToast(
         lang === "zh" ? `已刪除 ${ids.length} 項` : `Deleted ${ids.length} item(s)`,
         "success"
@@ -1357,7 +1445,8 @@ function AppInner() {
   // Record a usage/consumption event for a specific date (may be a past
   // date, not just "today"). entries = [{ id, itemNo, brand, category,
   // qtyBefore, qtyAfter }]. Writes the new current qty AND a movement log
-  // entry stamped with the chosen dateKey, in one batch per chunk.
+  // entry stamped with the chosen dateKey, in one batch per chunk, and
+  // pushes one undo action covering the whole entry.
   const recordInventoryUsage = async (dateKey, entries) => {
     if (!entries || !entries.length) return;
     const day = dateKey || todayStr();
@@ -1381,6 +1470,10 @@ function AppInner() {
         });
         await batch.commit();
       }
+      pushInventoryUndo({
+        label: lang === "zh" ? `記錄用量（${entries.length} 項）` : `Record usage (${entries.length} item(s))`,
+        changes: entries.map((e) => ({ id: e.id, before: { itemNo: e.itemNo, brand: e.brand || "", category: e.category || "", qty: e.qtyBefore } })),
+      });
       showToast(
         lang === "zh" ? `已記錄 ${entries.length} 項用量` : `Recorded usage for ${entries.length} item(s)`,
         "success"
@@ -1575,9 +1668,6 @@ function AppInner() {
           <div className="p-4">
             <div className="text-[10px] font-semibold tracking-widest text-stone-400 uppercase px-2 pb-2">{t("menuTitle")}</div>
             <SidebarItem icon={<Calendar size={17} />} label={t("navCalendar")} active={page === "calendar"} onClick={() => { setPage("calendar"); setSidebarOpen(false); }} />
-            <SidebarItem icon={<Scissors size={17} />} label={t("navServices")} active={page === "services"} onClick={() => { setPage("services"); setSidebarOpen(false); }} />
-            <SidebarItem icon={<MapPin size={17} />} label={t("navContact")} active={page === "contact"} onClick={() => { setPage("contact"); setSidebarOpen(false); }} />
-            <SidebarItem icon={<ShoppingCart size={17} />} label={t("navPOS")} active={page === "pos"} onClick={() => { setPage("pos"); setSidebarOpen(false); }} />
             <SidebarItem
               icon={(() => {
                 const recentCount = bookings.filter((b) => {
@@ -1601,6 +1691,9 @@ function AppInner() {
               onClick={() => { setPage("pending"); setSidebarOpen(false); }}
             />
             <SidebarItem icon={<Package size={17} />} label={t("navInventory")} active={page === "inventory"} onClick={() => { setPage("inventory"); setSidebarOpen(false); }} />
+            <SidebarItem icon={<ShoppingCart size={17} />} label={t("navPOS")} active={page === "pos"} onClick={() => { setPage("pos"); setSidebarOpen(false); }} />
+            <SidebarItem icon={<Scissors size={17} />} label={t("navServices")} active={page === "services"} onClick={() => { setPage("services"); setSidebarOpen(false); }} />
+            <SidebarItem icon={<MapPin size={17} />} label={t("navContact")} active={page === "contact"} onClick={() => { setPage("contact"); setSidebarOpen(false); }} />
             {user.role === "admin" && (
               <SidebarItem icon={<Users size={17} />} label={t("navStaff")} active={page === "staff"} onClick={() => { setPage("staff"); setSidebarOpen(false); }} />
             )}
@@ -1608,7 +1701,7 @@ function AppInner() {
               <SidebarItem icon={<User size={17} />} label={t("navAccounts")} active={page === "accounts"} onClick={() => { setPage("accounts"); setSidebarOpen(false); }} />
             )}
             {user.role === "admin" && (
-              <SidebarItem icon={<Database size={17} />} label={t("navFirestore")} active={page === "firestore"} onClick={() => { setPage("firestore"); setSidebarOpen(false); }} />
+              <SidebarItem icon={<Settings size={17} />} label={t("navSettings")} active={page === "settings"} onClick={() => { setPage("settings"); setSidebarOpen(false); }} />
             )}
           </div>
           <div className="mt-auto p-4 border-t border-stone-200">
@@ -1672,6 +1765,8 @@ function AppInner() {
               onBulkSetCategory={bulkUpdateInventoryCategory}
               onBulkDelete={bulkDeleteInventoryItems}
               onRecordUsage={recordInventoryUsage}
+              canUndo={inventoryUndoStack.length > 0}
+              onUndo={undoLastInventoryChange}
               showToast={showToast}
             />
           )}
@@ -1689,8 +1784,8 @@ function AppInner() {
               showToast={showToast}
             />
           )}
-          {page === "firestore" && user.role === "admin" && (
-            <FirestoreTestPage t={t} lang={lang} showToast={showToast} />
+          {page === "settings" && user.role === "admin" && (
+            <SettingsPage t={t} lang={lang} introText={introText} onSaveIntro={saveIntro} />
           )}
         </main>
       </div>
@@ -2237,12 +2332,9 @@ function CalendarPage({
           {lang === "zh" ? <>預約<span className="text-rose-400">行事曆</span></> : <>Appointment <span className="text-rose-400">Calendar</span></>}
         </h1>
         <div className="flex items-center gap-2 flex-wrap">
-          {user.role === "admin" && <IntroEditor t={t} lang={lang} introText={introText} onSave={saveIntro} />}
-          {user.role === "admin" && (
-            <button onClick={() => openNewBooking()} className="flex items-center gap-1.5 bg-rose-400 hover:bg-rose-500 text-white text-sm font-medium px-4 py-2 rounded-lg transition">
-              <Plus size={16} /> {t("newAppointment")}
-            </button>
-          )}
+          <button onClick={() => openNewBooking()} className="flex items-center gap-1.5 bg-rose-400 hover:bg-rose-500 text-white text-sm font-medium px-4 py-2 rounded-lg transition">
+            <Plus size={16} /> {t("newAppointment")}
+          </button>
         </div>
       </div>
 
@@ -3234,6 +3326,13 @@ function sortItemsForMode(items, mode) {
   const list = [...items];
   if (mode === "stock") return list.sort((a, b) => (Number(a.qty) || 0) - (Number(b.qty) || 0));
   if (mode === "recent") return list.sort((a, b) => tsMillis(b.updatedAt) - tsMillis(a.updatedAt));
+  if (mode === "brand") {
+    return list.sort((a, b) => {
+      const bc = (a.brand || "").localeCompare(b.brand || "", undefined, { numeric: true, sensitivity: "base" });
+      if (bc !== 0) return bc;
+      return (a.itemNo || "").localeCompare(b.itemNo || "", undefined, { numeric: true, sensitivity: "base" });
+    });
+  }
   // "itemNo" (and fallback)
   return list.sort((a, b) => (a.itemNo || "").localeCompare(b.itemNo || "", undefined, { numeric: true, sensitivity: "base" }));
 }
@@ -3262,7 +3361,8 @@ function sortItemsForMode(items, mode) {
 function InventoryPage({
   t, lang, isAdmin, inventory, lowStockThreshold,
   onSaveThreshold, onSaveItem, onDeleteItem, onBulkUpsert,
-  onBulkSetBrand, onBulkSetCategory, onBulkDelete, onRecordUsage, showToast,
+  onBulkSetBrand, onBulkSetCategory, onBulkDelete, onRecordUsage,
+  canUndo, onUndo, showToast,
 }) {
   const [search, setSearch] = useState("");
   const [sortMode, setSortMode] = useState("dye"); // "dye" | "stock" | "itemNo" | "recent"
@@ -3633,6 +3733,7 @@ function InventoryPage({
   const sortOptions = [
     ["dye", t("inventorySortDye")],
     ["stock", t("inventorySortStock")],
+    ["brand", t("inventorySortBrand")],
     ["itemNo", t("inventorySortItemNo")],
     ["recent", t("inventorySortRecent")],
   ];
@@ -3658,6 +3759,12 @@ function InventoryPage({
               className={`flex items-center gap-1.5 text-sm font-medium px-3 py-2 rounded-lg transition ${selectMode ? "bg-rose-400 hover:bg-rose-500 text-white" : "border border-stone-200 hover:border-rose-300 text-stone-600 hover:text-rose-500"}`}>
               <CheckSquare size={15} /> {t("inventorySelectMode")}
             </button>
+            {canUndo && (
+              <button type="button" onClick={onUndo}
+                className="flex items-center gap-1.5 text-sm font-medium border border-stone-200 hover:border-amber-300 text-stone-600 hover:text-amber-600 px-3 py-2 rounded-lg transition">
+                <Undo2 size={15} /> {t("inventoryUndo")}
+              </button>
+            )}
           </div>
         )}
       </div>
@@ -3875,7 +3982,7 @@ function InventoryPage({
       <InventoryRecentActivity t={t} lang={lang} />
 
       {showPasteModal && isAdmin && (
-        <InventoryPasteModal t={t} lang={lang} onClose={() => setShowPasteModal(false)} onConfirm={onBulkUpsert} />
+        <InventoryPasteModal t={t} lang={lang} inventory={inventory} onClose={() => setShowPasteModal(false)} onConfirm={onBulkUpsert} />
       )}
 
       {showUsageModal && isAdmin && (
@@ -3894,7 +4001,7 @@ function InventoryPage({
 }
 
 /* ────────────────────────────────────────────────────
-   INVENTORY PASTE-UPDATE MODAL
+   INVENTORY PASTE-UPDATE MODAL ("批次新增" Batch Add)
    Accepts a raw Excel copy-paste. Formats auto-detected
    line-by-line by column count:
      2 columns → Item No. / Q'ty
@@ -3902,13 +4009,15 @@ function InventoryPage({
      4 columns → Category / Brand / Item No. / Q'ty
    A stray header row (text in the Q'ty column) is
    automatically skipped since it won't parse as a number.
-   See AppInner's bulkUpsertInventory for the matching rule
-   that keeps the same item no. under different brands from
-   colliding into one record.
+   Two-step flow: paste → PREVIEW (every row listed with a
+   New / Update / Skipped badge, computed against the live
+   inventory using the same brand+itemNo matching rule as
+   AppInner's bulkUpsertInventory) → confirm & save.
 ──────────────────────────────────────────────────── */
 
-function InventoryPasteModal({ t, lang, onClose, onConfirm }) {
+function InventoryPasteModal({ t, lang, inventory, onClose, onConfirm }) {
   const [text, setText] = useState("");
+  const [step, setStep] = useState("paste"); // "paste" | "preview"
   const [submitting, setSubmitting] = useState(false);
 
   const parsed = useMemo(() => {
@@ -3947,51 +4056,124 @@ function InventoryPasteModal({ t, lang, onClose, onConfirm }) {
     return { rows, invalid };
   }, [text]);
 
+  // Preview status per row — mirrors AppInner's bulkUpsertInventory matching
+  // rule exactly, so what you see here is what will actually happen.
+  const preview = useMemo(() => {
+    return parsed.rows.map((r) => {
+      const hasBrandColumn = r.brand !== undefined && r.brand !== "";
+      const no = r.itemNo.trim().toLowerCase();
+      if (hasBrandColumn) {
+        const br = r.brand.trim().toLowerCase();
+        const match = inventory.find((i) => (i.itemNo || "").trim().toLowerCase() === no && (i.brand || "").trim().toLowerCase() === br);
+        return { ...r, status: match ? "update" : "new" };
+      }
+      const candidates = inventory.filter((i) => (i.itemNo || "").trim().toLowerCase() === no);
+      if (candidates.length > 1) return { ...r, status: "skip" };
+      return { ...r, status: candidates.length === 1 ? "update" : "new" };
+    });
+  }, [parsed.rows, inventory]);
+
+  const counts = useMemo(() => ({
+    new: preview.filter((r) => r.status === "new").length,
+    update: preview.filter((r) => r.status === "update").length,
+    skip: preview.filter((r) => r.status === "skip").length,
+  }), [preview]);
+
+  const goPreview = () => { if (parsed.rows.length) setStep("preview"); };
+
   const handleConfirm = async () => {
-    if (!parsed.rows.length) return;
     setSubmitting(true);
     await onConfirm(parsed.rows);
     setSubmitting(false);
     onClose();
   };
 
+  const statusBadge = (status) => {
+    if (status === "new") return <span className="px-1.5 py-0.5 rounded bg-green-50 text-green-600 text-[10px] font-semibold flex-shrink-0">{t("inventoryPasteStatusNew")}</span>;
+    if (status === "update") return <span className="px-1.5 py-0.5 rounded bg-blue-50 text-blue-600 text-[10px] font-semibold flex-shrink-0">{t("inventoryPasteStatusUpdate")}</span>;
+    return <span className="px-1.5 py-0.5 rounded bg-amber-50 text-amber-600 text-[10px] font-semibold flex-shrink-0">{t("inventoryPasteStatusSkip")}</span>;
+  };
+
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={onClose}>
       <div className="bg-white rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto shadow-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-6 py-4 border-b border-stone-100">
-          <h2 className="font-display text-xl font-light text-stone-800">{t("inventoryPasteTitle")}</h2>
+          <h2 className="font-display text-xl font-light text-stone-800">
+            {step === "paste" ? t("inventoryPasteTitle") : t("inventoryPastePreviewTitle")}
+          </h2>
           <button type="button" onClick={onClose} className="text-stone-400 hover:text-rose-400 transition"><X size={20} /></button>
         </div>
-        <div className="px-6 py-4">
-          <p className="text-xs text-stone-400 mb-2 leading-relaxed">{t("inventoryPasteDesc")}</p>
-          <p className="text-xs text-amber-500 mb-3 leading-relaxed">{t("inventoryPasteAmbiguousNote")}</p>
-          <textarea
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            placeholder={"A001\t25\nA002\t10\nA003\t8\n\n" + (lang === "zh"
-              ? "（也可貼 3 欄：品牌／編號／數量，或 4 欄：種類／品牌／編號／數量）\nOPI\tB010\t14\n指甲油\tOPI\tB011\t20"
-              : "(3 columns: Brand/Item/Qty, or 4 columns: Category/Brand/Item/Qty also work)\nOPI\tB010\t14\nNail Polish\tOPI\tB011\t20")}
-            rows={10}
-            className="w-full px-3 py-2.5 border border-stone-200 rounded-lg text-xs font-mono bg-stone-50 outline-none focus:border-rose-300 resize-none"
-          />
-          {text.trim() && (
-            <div className="flex items-center gap-4 text-xs mt-2.5 text-stone-500">
-              <span>{t("inventoryPasteMatched")}: <b className="text-stone-700">{parsed.rows.length}</b></span>
-              {parsed.invalid > 0 && <span className="text-amber-500">{t("inventoryPasteInvalid")}: {parsed.invalid}</span>}
+
+        {step === "paste" ? (
+          <>
+            <div className="px-6 py-4">
+              <p className="text-xs text-stone-400 mb-2 leading-relaxed">{t("inventoryPasteDesc")}</p>
+              <p className="text-xs text-amber-500 mb-3 leading-relaxed">{t("inventoryPasteAmbiguousNote")}</p>
+              <textarea
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+                placeholder={"A001\t25\nA002\t10\nA003\t8\n\n" + (lang === "zh"
+                  ? "（也可貼 3 欄：品牌／編號／數量，或 4 欄：種類／品牌／編號／數量）\nOPI\tB010\t14\n指甲油\tOPI\tB011\t20"
+                  : "(3 columns: Brand/Item/Qty, or 4 columns: Category/Brand/Item/Qty also work)\nOPI\tB010\t14\nNail Polish\tOPI\tB011\t20")}
+                rows={10}
+                className="w-full px-3 py-2.5 border border-stone-200 rounded-lg text-xs font-mono bg-stone-50 outline-none focus:border-rose-300 resize-none"
+              />
+              {text.trim() && (
+                <div className="flex items-center gap-4 text-xs mt-2.5 text-stone-500">
+                  <span>{t("inventoryPasteMatched")}: <b className="text-stone-700">{parsed.rows.length}</b></span>
+                  {parsed.invalid > 0 && <span className="text-amber-500">{t("inventoryPasteInvalid")}: {parsed.invalid}</span>}
+                </div>
+              )}
             </div>
-          )}
-        </div>
-        <div className="flex items-center gap-2 px-6 py-4 border-t border-stone-100">
-          <button type="button" onClick={onClose} className="text-sm font-medium text-stone-500 border border-stone-200 hover:border-stone-300 px-4 py-2 rounded-lg transition ml-auto">
-            {t("cancel")}
-          </button>
-          <button
-            type="button" onClick={handleConfirm} disabled={!parsed.rows.length || submitting}
-            className="text-sm font-medium bg-rose-400 hover:bg-rose-500 disabled:opacity-50 text-white px-4 py-2 rounded-lg transition"
-          >
-            {submitting ? t("guestSubmitting") : `${t("inventoryPasteConfirm")} (${parsed.rows.length})`}
-          </button>
-        </div>
+            <div className="flex items-center gap-2 px-6 py-4 border-t border-stone-100">
+              <button type="button" onClick={onClose} className="text-sm font-medium text-stone-500 border border-stone-200 hover:border-stone-300 px-4 py-2 rounded-lg transition ml-auto">
+                {t("cancel")}
+              </button>
+              <button
+                type="button" onClick={goPreview} disabled={!parsed.rows.length}
+                className="text-sm font-medium bg-rose-400 hover:bg-rose-500 disabled:opacity-50 text-white px-4 py-2 rounded-lg transition"
+              >
+                {t("inventoryUsagePreview")} ({parsed.rows.length})
+              </button>
+            </div>
+          </>
+        ) : (
+          <>
+            <div className="px-6 py-4">
+              <div className="flex items-center gap-3 text-xs text-stone-500 mb-3">
+                <span className="text-green-600 font-semibold">{t("inventoryPasteStatusNew")} {counts.new}</span>
+                <span className="text-blue-600 font-semibold">{t("inventoryPasteStatusUpdate")} {counts.update}</span>
+                {counts.skip > 0 && <span className="text-amber-600 font-semibold">{t("inventoryPasteStatusSkip")} {counts.skip}</span>}
+              </div>
+              <div className="max-h-80 overflow-y-auto border border-stone-100 rounded-lg divide-y divide-stone-50">
+                {preview.map((r, idx) => (
+                  <div key={idx} className="flex items-center gap-2 px-3 py-2 text-xs">
+                    <div className="flex-1 min-w-0">
+                      <div className="font-semibold text-stone-700 truncate">{r.itemNo}</div>
+                      <div className="text-stone-400 truncate">
+                        {r.category ? `${r.category} · ` : ""}{r.brand || t("inventoryNoBrand")}
+                      </div>
+                    </div>
+                    <span className="font-semibold text-stone-600 flex-shrink-0">{r.qty}</span>
+                    {statusBadge(r.status)}
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="flex items-center gap-2 px-6 py-4 border-t border-stone-100">
+              <button type="button" onClick={() => setStep("paste")}
+                className="flex items-center gap-1.5 text-sm font-medium text-stone-500 border border-stone-200 hover:border-stone-300 px-4 py-2 rounded-lg transition">
+                <ArrowLeft size={14} /> {t("inventoryPasteBack")}
+              </button>
+              <button
+                type="button" onClick={handleConfirm} disabled={submitting}
+                className="text-sm font-medium bg-rose-400 hover:bg-rose-500 disabled:opacity-50 text-white px-4 py-2 rounded-lg transition ml-auto"
+              >
+                {submitting ? t("guestSubmitting") : `${t("inventoryPasteConfirm")} (${counts.new + counts.update})`}
+              </button>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
@@ -4190,34 +4372,65 @@ function InventoryRecentActivity({ t, lang }) {
    — shown as a separate small section at top of calendar when admin
 ════════════════════════════════════════════════════ */
 
-function IntroEditor({ t, lang, introText, onSave }) {
-  const [open, setOpen] = useState(false);
+/* ════════════════════════════════════════════════════
+   SETTINGS PAGE (admin only)
+   Currently holds: 首頁介紹文字 preview + edit.
+   Room to grow — add more setting sections here later.
+════════════════════════════════════════════════════ */
+
+function SettingsPage({ t, lang, introText, onSaveIntro }) {
   const [zh, setZh] = useState(introText?.zh || "");
   const [en, setEn] = useState(introText?.en || "");
+  const [dirty, setDirty] = useState(false);
 
   useEffect(() => {
     setZh(introText?.zh || "");
     setEn(introText?.en || "");
+    setDirty(false);
   }, [introText]);
 
-  const save = () => { onSave(zh, en); setOpen(false); };
+  const handleChange = (setter) => (e) => { setter(e.target.value); setDirty(true); };
+  const save = () => { onSaveIntro(zh, en); setDirty(false); };
 
-  if (!open) {
-    return (
-      <button type="button" onClick={() => setOpen(true)}
-        className="flex items-center gap-1.5 text-xs font-medium text-stone-400 hover:text-rose-400 border border-stone-200 hover:border-rose-200 px-3 py-1.5 rounded-lg transition">
-        <Pencil size={12} /> {t("editIntro")}
-      </button>
-    );
-  }
+  const previewZh = zh || T["homeIntro"]?.zh || "";
+  const previewEn = en || T["homeIntro"]?.en || "";
+
   return (
-    <div className="bg-white border border-rose-200 rounded-xl p-4 shadow-sm w-full max-w-xl">
-      <div className="text-xs font-semibold text-stone-500 mb-2">{t("editIntro")}</div>
-      <textarea value={zh} onChange={(e) => setZh(e.target.value)} rows={3} className="w-full text-sm border border-stone-200 rounded-lg px-3 py-2 mb-2 focus:outline-none focus:border-rose-400 resize-none" placeholder="中文介紹詞" />
-      <textarea value={en} onChange={(e) => setEn(e.target.value)} rows={3} className="w-full text-sm border border-stone-200 rounded-lg px-3 py-2 mb-3 focus:outline-none focus:border-rose-400 resize-none" placeholder="English introduction" />
-      <div className="flex gap-2">
-        <button type="button" onClick={save} className="bg-rose-400 hover:bg-rose-500 text-white text-xs font-medium px-3 py-1.5 rounded-lg transition">{t("saveIntro")}</button>
-        <button type="button" onClick={() => setOpen(false)} className="text-xs text-stone-500 border border-stone-200 px-3 py-1.5 rounded-lg transition">{t("cancel")}</button>
+    <div className="max-w-3xl">
+      <h1 className="font-display text-2xl font-light text-stone-800 mb-6">
+        {lang === "zh" ? <>{t("settingsTitle")}</> : <>{t("settingsTitle")}</>}
+      </h1>
+
+      <div className="bg-white border border-stone-200 rounded-xl shadow-sm p-5">
+        <h2 className="text-sm font-semibold text-stone-700 mb-4">{t("settingsIntroSection")}</h2>
+
+        {/* Live preview — matches how HomePage falls back to T["homeIntro"] when empty */}
+        <div className="mb-5">
+          <div className="text-[11px] font-medium text-stone-400 uppercase tracking-wide mb-1.5">{t("settingsIntroPreview")}</div>
+          <div className="bg-stone-50 border border-stone-200 rounded-lg p-4">
+            <p className="text-sm text-stone-600 leading-relaxed whitespace-pre-wrap">{lang === "zh" ? previewZh : previewEn}</p>
+          </div>
+        </div>
+
+        <div className="space-y-3">
+          <div>
+            <label className="text-[11px] font-medium text-stone-400 uppercase tracking-wide mb-1.5 block">{t("settingsIntroEditZh")}</label>
+            <textarea value={zh} onChange={handleChange(setZh)} rows={3}
+              className="w-full text-sm border border-stone-200 rounded-lg px-3 py-2 focus:outline-none focus:border-rose-400 resize-none"
+              placeholder="中文介紹詞" />
+          </div>
+          <div>
+            <label className="text-[11px] font-medium text-stone-400 uppercase tracking-wide mb-1.5 block">{t("settingsIntroEditEn")}</label>
+            <textarea value={en} onChange={handleChange(setEn)} rows={3}
+              className="w-full text-sm border border-stone-200 rounded-lg px-3 py-2 focus:outline-none focus:border-rose-400 resize-none"
+              placeholder="English introduction" />
+          </div>
+        </div>
+
+        <button type="button" onClick={save} disabled={!dirty}
+          className="mt-4 bg-rose-400 hover:bg-rose-500 disabled:opacity-40 text-white text-sm font-medium px-4 py-2 rounded-lg transition">
+          {t("saveIntro")}
+        </button>
       </div>
     </div>
   );
@@ -4622,118 +4835,3 @@ function PayrollPanel({ t, lang, posRecords, allStaff, payrollSettings, onSave, 
     </div>
   );
 }
-
-function FirestoreTestPage({ t, lang, showToast }) {
-  const [text, setText] = useState("");
-  const [messages, setMessages] = useState([]);
-  const [loading, setLoading] = useState(true);
-  const [sending, setSending] = useState(false);
-
-  // Real-time listener — list updates instantly on any change, no manual refetch needed.
-  useEffect(() => {
-    const q = query(collection(db, "messages"), orderBy("createdAt", "desc"));
-    const unsubscribe = onSnapshot(
-      q,
-      (snap) => {
-        setMessages(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
-        setLoading(false);
-      },
-      (err) => {
-        console.error(err);
-        showToast(t("fetchError"), "warn");
-        setLoading(false);
-      }
-    );
-    return () => unsubscribe();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-  const handleSend = async () => {
-    if (sending) return; // prevent double-submit
-    if (!text.trim()) {
-      showToast(t("messageEmpty"), "warn");
-      return;
-    }
-    const value = text.trim();
-    setSending(true);
-    try {
-      await addDoc(collection(db, "messages"), {
-        text: value,
-        createdAt: serverTimestamp(),
-      });
-      setText("");
-      showToast(t("messageSaved"), "success");
-    } catch (err) {
-      console.error(err);
-      showToast(t("messageError"), "warn");
-    } finally {
-      setSending(false);
-    }
-  };
-
-  const handleKeyDown = (e) => {
-    if (e.key === "Enter") handleSend();
-  };
-
-  const formatTimestamp = (ts) => {
-    if (!ts?.toDate) return "—";
-    return ts.toDate().toLocaleString(lang === "zh" ? "zh-TW" : "en-US");
-  };
-
-  return (
-    <div>
-      <h1
-        className="font-display text-2xl md:text-3xl font-light text-stone-800 mb-2"
-        dangerouslySetInnerHTML={{ __html: t("firestoreTitle") }}
-      />
-      <p className="text-sm text-stone-500 mb-5">{t("firestoreDesc")}</p>
-
-      {/* Input + submit */}
-      <div className="bg-white border border-stone-200 rounded-xl p-5 shadow-sm mb-6">
-        <div className="flex gap-2">
-          <input
-            value={text}
-            onChange={(e) => setText(e.target.value)}
-            onKeyDown={handleKeyDown}
-            placeholder={t("messagePlaceholder")}
-            className="flex-1 px-3 py-2.5 text-sm border border-stone-200 rounded-lg bg-stone-50 focus:outline-none focus:border-rose-400 focus:bg-white transition"
-          />
-          <button
-            type="button"
-            onClick={handleSend}
-            disabled={sending}
-            className="flex items-center gap-1.5 bg-rose-400 hover:bg-rose-500 disabled:opacity-60 text-white text-sm font-medium px-4 py-2.5 rounded-lg transition flex-shrink-0"
-          >
-            <Send size={15} /> {sending ? t("sending") : t("sendMessage")}
-          </button>
-        </div>
-      </div>
-
-      {/* Current messages — synced live from Firestore */}
-      <div className="bg-white border border-stone-200 rounded-xl p-5 shadow-sm">
-        <div className="flex items-center justify-between pb-2.5 border-b border-stone-100 mb-3">
-          <h3 className="font-display text-lg font-light text-stone-800">{t("allMessages")}</h3>
-          <span className="flex items-center gap-1.5 text-xs font-medium text-stone-400">
-            <RefreshCw size={13} className={loading ? "animate-spin" : ""} /> {loading ? t("loadingMessages") : t("liveSync")}
-          </span>
-        </div>
-        {loading ? (
-          <div className="text-sm text-stone-400 py-3">{t("loadingMessages")}</div>
-        ) : messages.length === 0 ? (
-          <div className="text-sm text-stone-400 py-3">{t("noMessages")}</div>
-        ) : (
-          <div className="space-y-2">
-            {messages.map((m) => (
-              <div key={m.id} className="flex items-center justify-between gap-3 bg-stone-50 border border-stone-100 rounded-lg px-3 py-2.5">
-                <span className="text-sm text-stone-800 break-words">{m.text}</span>
-                <span className="text-[11px] text-stone-400 flex-shrink-0">{formatTimestamp(m.createdAt)}</span>
-              </div>
-            ))}
-          </div>
-        )}
-      </div>
-    </div>
-  );
-}
-
-
