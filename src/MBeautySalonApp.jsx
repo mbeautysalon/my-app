@@ -471,6 +471,9 @@ const T = {
   inventoryAllBrands: { zh: "全部品牌", en: "All Brands" },
   inventoryNoBrand: { zh: "未分類", en: "Unbranded" },
   inventoryGroupByBrand: { zh: "依品牌分組", en: "Group by Brand" },
+  inventorySelectAll: { zh: "全選", en: "Select All" },
+  inventoryApplyBrand: { zh: "套用品牌", en: "Apply Brand" },
+  inventoryClearSelection: { zh: "清除選取", en: "Clear Selection" },
 
   /* Inventory usage report (date-range analytics) */
   inventoryUsageReport: { zh: "用量統計", en: "Usage Report" },
@@ -1192,6 +1195,31 @@ function AppInner() {
     }
   };
 
+  // Bulk brand edit — used when multiple cards are checkbox-selected and
+  // the admin applies one brand to all of them in one go. Only touches
+  // the "brand" field (qty is untouched, so no movement log entry).
+  const bulkUpdateInventoryBrand = async (ids, brand) => {
+    if (!ids || !ids.length) return;
+    const trimmedBrand = (brand || "").trim();
+    try {
+      for (let i = 0; i < ids.length; i += 400) {
+        const chunk = ids.slice(i, i + 400);
+        const batch = writeBatch(db);
+        chunk.forEach((id) => {
+          batch.set(doc(db, "inventory", id), { brand: trimmedBrand, updatedAt: serverTimestamp() }, { merge: true });
+        });
+        await batch.commit();
+      }
+      showToast(
+        lang === "zh" ? `已將 ${ids.length} 項品牌更新為「${trimmedBrand || t("inventoryNoBrand")}」` : `Set brand to "${trimmedBrand || t("inventoryNoBrand")}" for ${ids.length} item(s)`,
+        "success"
+      );
+    } catch (err) {
+      console.error("bulkUpdateInventoryBrand error:", err);
+      showToast(t("syncError"), "warn");
+    }
+  };
+
   /* ───── STAFF LIST HANDLERS ───── */
   const addStaff = async (branch, name) => {
     const trimmed = name.trim();
@@ -1469,6 +1497,7 @@ function AppInner() {
               onSaveItem={saveInventoryItem}
               onDeleteItem={deleteInventoryItem}
               onBulkUpsert={bulkUpsertInventory}
+              onBulkSetBrand={bulkUpdateInventoryBrand}
               showToast={showToast}
             />
           )}
@@ -2995,7 +3024,7 @@ function AccountsPage({ t, lang, accounts, onSave, onDelete }) {
 
 function InventoryPage({
   t, lang, isAdmin, inventory, lowStockThreshold,
-  onSaveThreshold, onSaveItem, onDeleteItem, onBulkUpsert, showToast,
+  onSaveThreshold, onSaveItem, onDeleteItem, onBulkUpsert, onBulkSetBrand, showToast,
 }) {
   const [search, setSearch] = useState("");
   const [sortLowFirst, setSortLowFirst] = useState(false);
@@ -3011,6 +3040,8 @@ function InventoryPage({
   const [editingBrandId, setEditingBrandId] = useState(null);
   const [editBrand, setEditBrand] = useState("");
   const [thresholdDraft, setThresholdDraft] = useState(lowStockThreshold ?? 10);
+  const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const [bulkBrand, setBulkBrand] = useState("");
 
   useEffect(() => { setThresholdDraft(lowStockThreshold ?? 10); }, [lowStockThreshold]);
 
@@ -3071,38 +3102,69 @@ function InventoryPage({
     setNewBrand(""); setNewItemNo(""); setNewQty(""); setShowAddForm(false);
   };
 
+  const toggleSelect = (id) => {
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id); else next.add(id);
+      return next;
+    });
+  };
+  const allFilteredSelected = filtered.length > 0 && filtered.every((i) => selectedIds.has(i.id));
+  const toggleSelectAll = () => {
+    setSelectedIds(allFilteredSelected ? new Set() : new Set(filtered.map((i) => i.id)));
+  };
+  const applyBulkBrand = () => {
+    if (!selectedIds.size) return;
+    onBulkSetBrand([...selectedIds], bulkBrand.trim());
+    setBulkBrand("");
+    setSelectedIds(new Set());
+  };
+
   const renderCard = (item) => {
     const low = (Number(item.qty) || 0) <= threshold;
     const editing = editingId === item.id;
     const editingBrand = editingBrandId === item.id;
+    const checked = selectedIds.has(item.id);
     return (
       <div key={item.id}
-        className={`rounded-lg border px-3 py-2.5 flex flex-col gap-1.5 ${low ? "bg-rose-50 border-rose-200" : "bg-white border-stone-200"}`}>
-        {/* Brand — shown first per card layout order */}
-        {editingBrand ? (
-          <input
-            autoFocus value={editBrand} onChange={(e) => setEditBrand(e.target.value)}
-            onBlur={() => commitBrand(item)}
-            onKeyDown={(e) => { if (e.key === "Enter") commitBrand(item); if (e.key === "Escape") setEditingBrandId(null); }}
-            className="w-full px-1.5 py-0.5 border border-rose-300 rounded text-[11px] outline-none"
-            placeholder={t("inventoryBrand")}
-          />
-        ) : (
-          <span
-            onClick={() => isAdmin && startEditBrand(item)}
-            className={`text-[11px] font-semibold uppercase tracking-wide truncate ${isAdmin ? "cursor-pointer hover:text-rose-500" : ""} ${item.brand ? "text-stone-500" : "text-stone-300 italic"}`}
-            title={item.brand || t("inventoryNoBrand")}
-          >
-            {item.brand || t("inventoryNoBrand")}
-          </span>
-        )}
+        className={`rounded-md border px-2.5 py-2 sm:px-1.5 sm:py-1 flex flex-col gap-1.5 sm:gap-0.5 ${checked ? "bg-rose-100 border-rose-300" : low ? "bg-rose-50 border-rose-200" : "bg-white border-stone-200"}`}>
+        {/* Checkbox + Brand — shown first per card layout order */}
+        <div className="flex items-center gap-1.5 sm:gap-1">
+          {isAdmin && (
+            <label className="flex items-center justify-center w-6 h-6 -m-1 sm:w-auto sm:h-auto sm:m-0 flex-shrink-0 cursor-pointer">
+              <input
+                type="checkbox" checked={checked} onChange={() => toggleSelect(item.id)}
+                className="w-4 h-4 sm:w-2.5 sm:h-2.5 accent-rose-400"
+              />
+            </label>
+          )}
+          {editingBrand ? (
+            <input
+              autoFocus value={editBrand} onChange={(e) => setEditBrand(e.target.value)}
+              onBlur={() => commitBrand(item)}
+              onKeyDown={(e) => { if (e.key === "Enter") commitBrand(item); if (e.key === "Escape") setEditingBrandId(null); }}
+              className="w-full px-1.5 py-1 sm:px-1 sm:py-0 border border-rose-300 rounded text-xs sm:text-[9px] outline-none"
+              placeholder={t("inventoryBrand")}
+            />
+          ) : (
+            <span
+              onClick={() => isAdmin && startEditBrand(item)}
+              className={`text-xs sm:text-[9px] font-semibold uppercase tracking-wide truncate leading-tight ${isAdmin ? "cursor-pointer hover:text-rose-500" : ""} ${item.brand ? "text-stone-500" : "text-stone-300 italic"}`}
+              title={item.brand || t("inventoryNoBrand")}
+            >
+              {item.brand || t("inventoryNoBrand")}
+            </span>
+          )}
+        </div>
 
         {/* Item No. */}
         <div className="flex items-center justify-between gap-1">
-          <span className="text-xs font-semibold text-stone-700 truncate" title={item.itemNo}>{item.itemNo}</span>
+          <span className="text-xs sm:text-[10px] font-semibold text-stone-700 truncate leading-tight" title={item.itemNo}>{item.itemNo}</span>
           {isAdmin && (
-            <button type="button" onClick={() => onDeleteItem(item.id)} className="text-stone-300 hover:text-rose-500 transition flex-shrink-0">
-              <X size={12} />
+            <button type="button" onClick={() => onDeleteItem(item.id)}
+              className="flex items-center justify-center w-6 h-6 -m-1 sm:w-auto sm:h-auto sm:m-0 text-stone-300 hover:text-rose-500 transition flex-shrink-0">
+              <X size={14} className="sm:hidden" />
+              <X size={9} className="hidden sm:block" />
             </button>
           )}
         </div>
@@ -3114,19 +3176,21 @@ function InventoryPage({
             onChange={(e) => setEditQty(e.target.value)}
             onBlur={() => commitEdit(item)}
             onKeyDown={(e) => { if (e.key === "Enter") commitEdit(item); if (e.key === "Escape") setEditingId(null); }}
-            className="w-full px-1.5 py-1 border border-rose-300 rounded text-sm outline-none"
+            className="w-full px-1.5 py-1.5 sm:px-1 sm:py-0.5 border border-rose-300 rounded text-sm sm:text-xs outline-none"
           />
         ) : isAdmin ? (
-          <div className="flex items-center justify-between gap-1">
-            <button type="button" onClick={() => bump(item, -1)} className="w-6 h-6 flex items-center justify-center rounded bg-stone-100 hover:bg-stone-200 text-stone-500 text-sm font-bold">−</button>
+          <div className="flex items-center justify-between gap-1 sm:gap-0.5">
+            <button type="button" onClick={() => bump(item, -1)}
+              className="w-7 h-7 sm:w-4 sm:h-4 flex items-center justify-center rounded bg-stone-100 hover:bg-stone-200 text-stone-500 text-base sm:text-[10px] font-bold flex-shrink-0">−</button>
             <span onClick={() => startEdit(item)}
-              className={`text-sm font-bold cursor-pointer ${low ? "text-rose-500" : "text-stone-800"}`}>
+              className={`text-sm sm:text-xs font-bold cursor-pointer ${low ? "text-rose-500" : "text-stone-800"}`}>
               {item.qty ?? 0}
             </span>
-            <button type="button" onClick={() => bump(item, 1)} className="w-6 h-6 flex items-center justify-center rounded bg-stone-100 hover:bg-stone-200 text-stone-500 text-sm font-bold">+</button>
+            <button type="button" onClick={() => bump(item, 1)}
+              className="w-7 h-7 sm:w-4 sm:h-4 flex items-center justify-center rounded bg-stone-100 hover:bg-stone-200 text-stone-500 text-base sm:text-[10px] font-bold flex-shrink-0">+</button>
           </div>
         ) : (
-          <span className={`text-sm font-bold ${low ? "text-rose-500" : "text-stone-800"}`}>{item.qty ?? 0}</span>
+          <span className={`text-sm sm:text-xs font-bold ${low ? "text-rose-500" : "text-stone-800"}`}>{item.qty ?? 0}</span>
         )}
       </div>
     );
@@ -3221,7 +3285,35 @@ function InventoryPage({
             />
           </div>
         )}
+        {isAdmin && filtered.length > 0 && (
+          <label className="flex items-center gap-1.5 text-xs text-stone-500 cursor-pointer select-none">
+            <input type="checkbox" checked={allFilteredSelected} onChange={toggleSelectAll} className="w-3.5 h-3.5 accent-rose-400" />
+            {t("inventorySelectAll")}
+          </label>
+        )}
       </div>
+
+      {/* bulk brand-edit toolbar — appears once at least one card is checked */}
+      {isAdmin && selectedIds.size > 0 && (
+        <div className="flex flex-wrap items-center gap-2 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 mb-4">
+          <span className="text-xs font-semibold text-rose-600 flex-shrink-0">
+            {lang === "zh" ? `已選取 ${selectedIds.size} 項` : `${selectedIds.size} selected`}
+          </span>
+          <input
+            value={bulkBrand} onChange={(e) => setBulkBrand(e.target.value)}
+            placeholder={t("inventoryBrand")}
+            className="px-2.5 py-1.5 border border-stone-200 rounded-lg text-xs bg-white outline-none focus:border-rose-300 w-40"
+          />
+          <button type="button" onClick={applyBulkBrand}
+            className="text-xs font-semibold bg-rose-400 hover:bg-rose-500 text-white px-3 py-1.5 rounded-lg transition">
+            {t("inventoryApplyBrand")}
+          </button>
+          <button type="button" onClick={() => setSelectedIds(new Set())}
+            className="text-xs font-medium text-stone-500 border border-stone-200 hover:border-stone-300 px-3 py-1.5 rounded-lg transition">
+            {t("inventoryClearSelection")}
+          </button>
+        </div>
+      )}
 
       {/* grid — dense so 150+ items stay scannable, grouped by brand */}
       {filtered.length === 0 ? (
@@ -3235,7 +3327,7 @@ function InventoryPage({
                   {group.brand} <span className="font-medium normal-case text-stone-300">· {group.items.length}</span>
                 </div>
               )}
-              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2">
+              <div className="grid grid-cols-2 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-10 xl:grid-cols-12 gap-2 sm:gap-1">
                 {group.items.map(renderCard)}
               </div>
             </div>
