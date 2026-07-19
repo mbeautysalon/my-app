@@ -508,6 +508,24 @@ const T = {
   inventoryTypeBulkPaste: { zh: "批次貼上", en: "Bulk Paste" },
   inventoryTypeUsageEntry: { zh: "用量記錄", en: "Usage" },
   inventoryLoadingReport: { zh: "儲存中...", en: "Saving..." },
+
+  /* Sort modes */
+  inventorySortMode: { zh: "排序方式", en: "Sort By" },
+  inventorySortDye: { zh: "染劑順序", en: "Dye Order" },
+  inventorySortStock: { zh: "庫存量", en: "Stock Level" },
+  inventorySortItemNo: { zh: "品項編號", en: "Item No." },
+  inventorySortRecent: { zh: "最近更新", en: "Recently Updated" },
+  inventoryDoubleTone: { zh: "加強色（雙色調）", en: "Double-tone / Intensifiers" },
+  inventoryOtherItems: { zh: "其他品項", en: "Other Items" },
+
+  /* Collapse groups */
+  inventoryCollapseAll: { zh: "全部收合", en: "Collapse All" },
+  inventoryExpandAll: { zh: "全部展開", en: "Expand All" },
+
+  /* Brand / category combo inputs — type new or pick existing */
+  inventoryBrandPlaceholder: { zh: "輸入新品牌或從清單選擇", en: "Type new or pick from list" },
+  inventoryCategoryPlaceholder: { zh: "輸入新種類或從清單選擇", en: "Type new or pick from list" },
+  inventoryPasteAmbiguousNote: { zh: "提醒：若同一個編號在不同品牌都有登記，只貼「編號＋數量」兩欄系統無法判斷要更新哪一筆，會直接略過並在結果提示你；請改貼 3 欄（品牌／編號／數量）即可正確比對。", en: "Note: if the same item number exists under multiple brands, a plain 2-column paste (Item No./Qty) can't tell which one you mean — those rows are skipped and flagged in the result. Use the 3-column format (Brand/Item No./Qty) to disambiguate." },
 };
 
 /* ════════════════════════════════════════════════════
@@ -1094,10 +1112,36 @@ function AppInner() {
        dateKey ("YYYY-MM-DD") and monthKey ("YYYY-MM"). For usage entries the
        dateKey is whatever consumption date the admin typed in — NOT
        necessarily today — so historical entry is supported.
+
+     IDENTITY FIX: item numbers are NOT globally unique on their own — the
+     same code (e.g. a hair-dye shade like "6.1") can exist under different
+     brands, or even different categories. The natural key for "is this the
+     same product?" is therefore (brand + itemNo), never itemNo alone. Two
+     code paths follow from that:
+       1. Editing a document you already have on screen (bump / inline qty /
+          inline brand or category edit) always writes to that exact
+          Firestore doc — it passes its real `id` through, so it can never
+          accidentally merge into a different item.
+       2. Creating from scratch (the "Add Item" form, or an Excel paste row)
+          has no `id` yet, so it looks up a match by (brand, itemNo) among
+          the live inventory list — if found, it updates THAT document;
+          if not, it creates a new one keyed off brand+itemNo.
   ────────────────────────────────────────────────────── */
-  // Firestore doc IDs can't contain "/", so sanitize while keeping the
-  // original itemNo text for display.
-  const inventoryDocId = (itemNo) => String(itemNo).trim().replace(/\//g, "-");
+  // Firestore doc IDs can't contain "/"; combine brand+itemNo so the same
+  // item number under two different brands never collides into one doc.
+  const inventoryDocId = (brand, itemNo) => {
+    const b = String(brand || "").trim().replace(/\//g, "-").replace(/\s+/g, "_") || "nobrand";
+    const n = String(itemNo || "").trim().replace(/\//g, "-");
+    return `${b}__${n}`;
+  };
+
+  const findInventoryByBrandItemNo = (itemNo, brand) => {
+    const no = String(itemNo || "").trim().toLowerCase();
+    const br = String(brand || "").trim().toLowerCase();
+    return inventory.find(
+      (i) => String(i.itemNo || "").trim().toLowerCase() === no && String(i.brand || "").trim().toLowerCase() === br
+    );
+  };
 
   const logInventoryMovement = async ({ itemId, itemNo, brand, category, qtyBefore, qtyAfter, changeType, dateKey }) => {
     if (qtyBefore === qtyAfter && changeType !== "new_item") return; // no real change, skip noise
@@ -1117,27 +1161,34 @@ function AppInner() {
     }
   };
 
-  const saveInventoryItem = async (itemNo, qty, extra = {}) => {
-    const { brand, category, changeType = "manual_edit" } = extra;
-    const trimmed = String(itemNo || "").trim();
-    if (!trimmed) {
+  // payload: { id?, itemNo, qty, brand?, category?, changeType? }
+  // Pass `id` when editing a document you already have (bump / inline edit) —
+  // omit it (Add Item form) to match-or-create by (brand, itemNo).
+  const saveInventoryItem = async ({ id, itemNo, qty, brand, category, changeType = "manual_edit" }) => {
+    const trimmedItemNo = String(itemNo || "").trim();
+    if (!trimmedItemNo) {
       showToast(t("inventoryItemNoRequired"), "warn");
       return;
     }
-    const id = inventoryDocId(trimmed);
-    const existing = inventory.find((i) => i.id === id);
+    let targetId = id;
+    let existing = id ? inventory.find((i) => i.id === id) : null;
+    if (!targetId) {
+      const match = findInventoryByBrandItemNo(trimmedItemNo, brand);
+      existing = match || null;
+      targetId = match ? match.id : inventoryDocId(brand, trimmedItemNo);
+    }
     const qtyBefore = existing ? Number(existing.qty) || 0 : 0;
     const qtyAfter = Number(qty) || 0;
     const finalBrand = brand !== undefined ? brand : (existing?.brand || "");
     const finalCategory = category !== undefined ? category : (existing?.category || "");
     try {
       await setDoc(
-        doc(db, "inventory", id),
-        { itemNo: trimmed, brand: finalBrand, category: finalCategory, qty: qtyAfter, updatedAt: serverTimestamp() },
+        doc(db, "inventory", targetId),
+        { itemNo: trimmedItemNo, brand: finalBrand, category: finalCategory, qty: qtyAfter, updatedAt: serverTimestamp() },
         { merge: true }
       );
       logInventoryMovement({
-        itemId: id, itemNo: trimmed, brand: finalBrand, category: finalCategory, qtyBefore, qtyAfter,
+        itemId: targetId, itemNo: trimmedItemNo, brand: finalBrand, category: finalCategory, qtyBefore, qtyAfter,
         changeType: existing ? changeType : "new_item",
       });
       showToast(t("inventorySaved"), "success");
@@ -1159,26 +1210,39 @@ function AppInner() {
   };
 
   // Bulk upsert from an Excel paste: rows = [{ itemNo, qty, brand?, category? }, ...].
-  // Existing item numbers get their qty (and brand/category, if supplied) updated;
-  // new ones are created. Every row also gets a movement log entry.
-  // Firestore batches are capped at 500 ops and each row writes 2 ops
-  // (inventory doc + movement doc), so we chunk conservatively.
+  // Matching rule (fixes the "same item no. across brands" bug):
+  //   - Row HAS a brand column (3/4-col paste) → match by exact (brand, itemNo).
+  //   - Row has NO brand column (plain 2-col paste) → only auto-match if
+  //     there is exactly ONE existing item with that itemNo across all
+  //     brands. If the same itemNo exists under 2+ different brands, we
+  //     can't safely guess which one you mean, so that row is SKIPPED and
+  //     counted separately — re-paste it with the brand column to resolve.
+  // Every written row also gets a movement log entry. Firestore batches
+  // are capped at 500 ops and each row writes 2 ops, so we chunk at 200.
   const bulkUpsertInventory = async (rows) => {
     if (!rows || !rows.length) return;
     try {
-      const existingMap = new Map(inventory.map((i) => [i.id, i]));
       const today = todayStr();
-      let updated = 0, added = 0;
+      let updated = 0, added = 0, skipped = 0;
       for (let i = 0; i < rows.length; i += 200) {
         const chunk = rows.slice(i, i + 200);
         const batch = writeBatch(db);
         chunk.forEach((r) => {
           const itemNo = String(r.itemNo).trim();
-          const id = inventoryDocId(itemNo);
-          const prev = existingMap.get(id);
+          const hasBrandColumn = r.brand !== undefined && r.brand !== "";
+          let prev = null;
+          if (hasBrandColumn) {
+            prev = findInventoryByBrandItemNo(itemNo, r.brand) || null;
+          } else {
+            const no = itemNo.toLowerCase();
+            const candidates = inventory.filter((i) => String(i.itemNo || "").trim().toLowerCase() === no);
+            if (candidates.length > 1) { skipped++; return; } // ambiguous — needs a brand column to disambiguate
+            prev = candidates[0] || null;
+          }
+          const id = prev ? prev.id : inventoryDocId(hasBrandColumn ? r.brand : "", itemNo);
           const qtyBefore = prev ? Number(prev.qty) || 0 : 0;
           const qtyAfter = Number(r.qty) || 0;
-          const brand = r.brand !== undefined && r.brand !== "" ? r.brand : (prev?.brand || "");
+          const brand = hasBrandColumn ? r.brand : (prev?.brand || "");
           const category = r.category !== undefined && r.category !== "" ? r.category : (prev?.category || "");
           if (prev) updated++; else added++;
           batch.set(
@@ -1196,9 +1260,12 @@ function AppInner() {
         });
         await batch.commit();
       }
+      const skippedNote = skipped > 0
+        ? (lang === "zh" ? `、略過 ${skipped} 項（同編號跨品牌，請補上品牌欄再貼一次）` : `, skipped ${skipped} (same item no. across brands — re-paste with a brand column)`)
+        : "";
       showToast(
-        lang === "zh" ? `已更新 ${updated} 項、新增 ${added} 項` : `Updated ${updated}, added ${added} item(s)`,
-        "success"
+        (lang === "zh" ? `已更新 ${updated} 項、新增 ${added} 項${skippedNote}` : `Updated ${updated}, added ${added}${skippedNote}`),
+        skipped > 0 ? "warn" : "success"
       );
     } catch (err) {
       console.error("bulkUpsertInventory error:", err);
@@ -3112,22 +3179,84 @@ function AccountsPage({ t, lang, accounts, onSave, onDelete }) {
   );
 }
 
+/* ────────────────────────────────────────────────────
+   HAIR-DYE COLOR-CODE SORTING HELPERS
+   Parses item numbers that follow the standard hair-color
+   numbering convention: LEVEL.TONE, e.g. "6.1", "10.0".
+     - Level (深淺): the whole-number part, 1 (darkest) → 10 (lightest)
+     - Tone (色調): the digit(s) after the dot —
+         .1 灰 .2 紫 .3 金 .4 橙 .5 棗紅 .6 紅 .7 綠
+       (ascending digit order already matches this convention)
+     - A 2+ digit tone (e.g. "6.13") means a mixed / intensifier
+       shade ("加強色", double-tone) — kept in its own section
+       rather than interleaved with single-tone shades.
+   Item numbers that don't match this pattern at all (tools,
+   accessories, non-standard codes) fall into "其他 Other".
+──────────────────────────────────────────────────── */
+
+function parseColorCode(itemNo) {
+  const s = String(itemNo || "").trim();
+  const m = s.match(/^(\d{1,2})(?:\.(\d{1,3}))?/);
+  if (!m) return null;
+  const level = parseInt(m[1], 10);
+  if (Number.isNaN(level) || level < 1 || level > 12) return null;
+  const toneStr = m[2] || "0";
+  return { level, toneVal: parseInt(toneStr, 10), isDouble: toneStr.length >= 2 };
+}
+
+function dyeSections(items) {
+  const single = [], double = [], other = [];
+  items.forEach((item) => {
+    const p = parseColorCode(item.itemNo);
+    if (!p) other.push(item);
+    else if (p.isDouble) double.push(item);
+    else single.push(item);
+  });
+  const byLevelTone = (a, b) => {
+    const pa = parseColorCode(a.itemNo), pb = parseColorCode(b.itemNo);
+    if (pa.level !== pb.level) return pa.level - pb.level;
+    return pa.toneVal - pb.toneVal;
+  };
+  single.sort(byLevelTone);
+  double.sort(byLevelTone);
+  other.sort((a, b) => (a.itemNo || "").localeCompare(b.itemNo || "", undefined, { numeric: true, sensitivity: "base" }));
+  return { single, double, other };
+}
+
+function tsMillis(ts) {
+  if (!ts) return 0;
+  if (typeof ts.toMillis === "function") return ts.toMillis();
+  if (ts.seconds) return ts.seconds * 1000;
+  return 0;
+}
+
+function sortItemsForMode(items, mode) {
+  const list = [...items];
+  if (mode === "stock") return list.sort((a, b) => (Number(a.qty) || 0) - (Number(b.qty) || 0));
+  if (mode === "recent") return list.sort((a, b) => tsMillis(b.updatedAt) - tsMillis(a.updatedAt));
+  // "itemNo" (and fallback)
+  return list.sort((a, b) => (a.itemNo || "").localeCompare(b.itemNo || "", undefined, { numeric: true, sensitivity: "base" }));
+}
+
 /* ════════════════════════════════════════════════════
    INVENTORY PAGE
    Visible to both admin (editable) and staff (read-only).
    - Compact grid so 150–180 items are scannable at a glance
-   - Hierarchy: 藥劑種類 Category → 品牌 Brand → 藥劑 Item
+   - Hierarchy: 藥劑種類 Category → 品牌 Brand → 藥劑 Item, each
+     level collapsible independently
    - Card order: Brand → Item No. → Qty
-   - "Select Mode" turns cards into checkable tiles:
-       · click a card = toggle it
-       · Shift+click = select a contiguous range
-       · every group header (category AND brand, including the
-         "Uncategorized" / "No Brand" ones) has its own checkbox
-         to select the whole group in one tap
+   - Default sort = "染劑順序" Dye Order (see helpers above);
+     also offers Stock Level / Item No. / Recently Updated
+   - Brand & category inputs are combo boxes (native <datalist>):
+     type a new value OR pick an existing one from the dropdown
+   - "Select Mode": click a card to toggle, Shift+click for a
+     range, group headers select their whole group in one tap
+     (including "Uncategorized" / "No Brand")
    - Selected items can be bulk brand-tagged, bulk category-tagged,
      bulk deleted, or sent straight into "Record Usage"
-   - "Paste Update" lets admins bulk-import/update straight from
-     an Excel copy of 2–4 columns (see InventoryPasteModal)
+   - IMPORTANT FIX: items are matched/created by (brand + itemNo),
+     not itemNo alone — see AppInner's saveInventoryItem /
+     bulkUpsertInventory for why this matters
 ════════════════════════════════════════════════════ */
 
 function InventoryPage({
@@ -3136,10 +3265,11 @@ function InventoryPage({
   onBulkSetBrand, onBulkSetCategory, onBulkDelete, onRecordUsage, showToast,
 }) {
   const [search, setSearch] = useState("");
-  const [sortLowFirst, setSortLowFirst] = useState(false);
+  const [sortMode, setSortMode] = useState("dye"); // "dye" | "stock" | "itemNo" | "recent"
   const [brandFilter, setBrandFilter] = useState("");
   const [categoryFilter, setCategoryFilter] = useState("");
   const [groupEnabled, setGroupEnabled] = useState(true);
+  const [collapsedGroups, setCollapsedGroups] = useState(() => new Set());
   const [showPasteModal, setShowPasteModal] = useState(false);
   const [showAddForm, setShowAddForm] = useState(false);
   const [showUsageModal, setShowUsageModal] = useState(false);
@@ -3151,6 +3281,8 @@ function InventoryPage({
   const [editQty, setEditQty] = useState("");
   const [editingBrandId, setEditingBrandId] = useState(null);
   const [editBrand, setEditBrand] = useState("");
+  const [editingCategoryId, setEditingCategoryId] = useState(null);
+  const [editCategory, setEditCategory] = useState("");
   const [thresholdDraft, setThresholdDraft] = useState(lowStockThreshold ?? 10);
 
   // Selection mode
@@ -3186,13 +3318,11 @@ function InventoryPage({
     }
     if (brandFilter) list = list.filter((i) => (i.brand || "") === brandFilter);
     if (categoryFilter) list = list.filter((i) => (i.category || "") === categoryFilter);
-    return [...list].sort((a, b) => {
-      if (sortLowFirst) return (Number(a.qty) || 0) - (Number(b.qty) || 0);
-      return (a.itemNo || "").localeCompare(b.itemNo || "", undefined, { numeric: true, sensitivity: "base" });
-    });
-  }, [inventory, search, brandFilter, categoryFilter, sortLowFirst]);
+    return list;
+  }, [inventory, search, brandFilter, categoryFilter]);
 
-  // Nested Category → Brand → items tree for the grouped view.
+  // Nested Category → Brand → items tree (unsorted at this stage —
+  // per-brand sorting/sectioning happens at render time via sortMode).
   const groupedTree = useMemo(() => {
     if (!groupEnabled) return [{ category: null, brands: [{ brand: null, items: filtered }] }];
     const catMap = new Map();
@@ -3217,23 +3347,69 @@ function InventoryPage({
   const totalQty = useMemo(() => inventory.reduce((sum, i) => sum + (Number(i.qty) || 0), 0), [inventory]);
   const lowCount = useMemo(() => inventory.filter((i) => (Number(i.qty) || 0) <= threshold).length, [inventory, threshold]);
 
+  /* ── Collapse helpers ── */
+  const catKey = (cat) => `cat::${cat}`;
+  const brandKey = (cat, brand) => `cat::${cat}::brand::${brand}`;
+  const isCollapsed = (key) => collapsedGroups.has(key);
+  const toggleCollapse = (key) => {
+    setCollapsedGroups((prev) => {
+      const next = new Set(prev);
+      if (next.has(key)) next.delete(key); else next.add(key);
+      return next;
+    });
+  };
+  const collapseAll = () => {
+    const keys = new Set();
+    groupedTree.forEach((cg) => {
+      if (cg.category) keys.add(catKey(cg.category));
+      cg.brands.forEach((bg) => { if (bg.brand) keys.add(brandKey(cg.category, bg.brand)); });
+    });
+    setCollapsedGroups(keys);
+  };
+  const expandAll = () => setCollapsedGroups(new Set());
+
+  // Flat, on-screen order (respects sort mode + collapsed groups) — used
+  // both for rendering consistency checks and for Shift+click ranges.
+  const visualFlatList = useMemo(() => {
+    const out = [];
+    groupedTree.forEach((catGroup) => {
+      if (catGroup.category && isCollapsed(catKey(catGroup.category))) return;
+      catGroup.brands.forEach((brandGroup) => {
+        if (brandGroup.brand && isCollapsed(brandKey(catGroup.category, brandGroup.brand))) return;
+        if (sortMode === "dye") {
+          const { single, double, other } = dyeSections(brandGroup.items);
+          out.push(...single, ...double, ...other);
+        } else {
+          out.push(...sortItemsForMode(brandGroup.items, sortMode));
+        }
+      });
+    });
+    return out;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [groupedTree, sortMode, collapsedGroups]);
+
   const startEdit = (item) => { setEditingId(item.id); setEditQty(String(item.qty ?? "")); };
   const commitEdit = (item) => {
-    onSaveItem(item.itemNo, editQty === "" ? 0 : Number(editQty), { brand: item.brand, category: item.category });
+    onSaveItem({ id: item.id, itemNo: item.itemNo, qty: editQty === "" ? 0 : Number(editQty), brand: item.brand, category: item.category });
     setEditingId(null);
   };
   const bump = (item, delta) => {
     const next = Math.max(0, (Number(item.qty) || 0) + delta);
-    onSaveItem(item.itemNo, next, { brand: item.brand, category: item.category, changeType: "bump" });
+    onSaveItem({ id: item.id, itemNo: item.itemNo, qty: next, brand: item.brand, category: item.category, changeType: "bump" });
   };
   const startEditBrand = (item) => { setEditingBrandId(item.id); setEditBrand(item.brand || ""); };
   const commitBrand = (item) => {
-    onSaveItem(item.itemNo, item.qty, { brand: editBrand.trim(), category: item.category });
+    onSaveItem({ id: item.id, itemNo: item.itemNo, qty: item.qty, brand: editBrand.trim(), category: item.category });
     setEditingBrandId(null);
+  };
+  const startEditCategory = (item) => { setEditingCategoryId(item.id); setEditCategory(item.category || ""); };
+  const commitCategory = (item) => {
+    onSaveItem({ id: item.id, itemNo: item.itemNo, qty: item.qty, brand: item.brand, category: editCategory.trim() });
+    setEditingCategoryId(null);
   };
   const handleAddSubmit = () => {
     if (!newItemNo.trim()) { showToast(t("inventoryItemNoRequired"), "warn"); return; }
-    onSaveItem(newItemNo, newQty === "" ? 0 : Number(newQty), { brand: newBrand.trim(), category: newCategory.trim() });
+    onSaveItem({ itemNo: newItemNo, qty: newQty === "" ? 0 : Number(newQty), brand: newBrand.trim(), category: newCategory.trim() });
     setNewBrand(""); setNewCategory(""); setNewItemNo(""); setNewQty(""); setShowAddForm(false);
   };
 
@@ -3248,7 +3424,7 @@ function InventoryPage({
   const handleCardClick = (item) => (e) => {
     if (!selectMode) return;
     if (e.shiftKey && lastClickedId) {
-      const ids = filtered.map((i) => i.id);
+      const ids = visualFlatList.map((i) => i.id);
       const from = ids.indexOf(lastClickedId);
       const to = ids.indexOf(item.id);
       if (from !== -1 && to !== -1) {
@@ -3273,7 +3449,7 @@ function InventoryPage({
   const groupSelectionState = (items) => {
     const ids = items.map((i) => i.id);
     const selectedCount = ids.filter((id) => selectedIds.has(id)).length;
-    return { all: selectedCount === ids.length, some: selectedCount > 0 && selectedCount < ids.length };
+    return { all: selectedCount === ids.length && ids.length > 0, some: selectedCount > 0 && selectedCount < ids.length };
   };
   const toggleGroupSelect = (items) => {
     const { all } = groupSelectionState(items);
@@ -3336,6 +3512,7 @@ function InventoryPage({
 
     const editing = editingId === item.id;
     const editingBrand = editingBrandId === item.id;
+    const editingCat = editingCategoryId === item.id;
     return (
       <div key={item.id}
         className={`rounded-md border px-2.5 py-2 sm:px-1.5 sm:py-1 flex flex-col gap-1.5 sm:gap-0.5 ${low ? "bg-rose-50 border-rose-200" : "bg-white border-stone-200"}`}>
@@ -3344,7 +3521,7 @@ function InventoryPage({
           {editingBrand ? (
             <input
               autoFocus value={editBrand} onChange={(e) => setEditBrand(e.target.value)}
-              onBlur={() => commitBrand(item)}
+              onBlur={() => commitBrand(item)} list="inventoryBrandOptions"
               onKeyDown={(e) => { if (e.key === "Enter") commitBrand(item); if (e.key === "Escape") setEditingBrandId(null); }}
               className="w-full px-1.5 py-1 sm:px-1 sm:py-0 border border-rose-300 rounded text-xs sm:text-[9px] outline-none"
               placeholder={t("inventoryBrand")}
@@ -3395,12 +3572,76 @@ function InventoryPage({
         ) : (
           <span className={`text-sm sm:text-xs font-bold ${low ? "text-rose-500" : "text-stone-800"}`}>{item.qty ?? 0}</span>
         )}
+
+        {/* Category — small, only shown while editing (kept off the resting
+            card so the already-tiny tile doesn't get a 4th line) */}
+        {isAdmin && editingCat && (
+          <input
+            autoFocus value={editCategory} onChange={(e) => setEditCategory(e.target.value)}
+            onBlur={() => commitCategory(item)} list="inventoryCategoryOptions"
+            onKeyDown={(e) => { if (e.key === "Enter") commitCategory(item); if (e.key === "Escape") setEditingCategoryId(null); }}
+            className="w-full px-1.5 py-1 sm:px-1 sm:py-0 border border-rose-300 rounded text-xs sm:text-[9px] outline-none"
+            placeholder={t("inventoryCategory")}
+          />
+        )}
+        {isAdmin && !editingCat && (
+          <button type="button" onClick={() => startEditCategory(item)}
+            className="text-left text-[9px] sm:text-[8px] text-stone-300 hover:text-rose-400 truncate leading-tight transition">
+            {item.category || `+ ${t("inventoryCategory")}`}
+          </button>
+        )}
       </div>
     );
   };
 
+  const renderItemGrid = (items) => {
+    if (sortMode === "dye") {
+      const { single, double, other } = dyeSections(items);
+      return (
+        <>
+          {single.length > 0 && (
+            <div className="grid grid-cols-2 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-10 xl:grid-cols-12 gap-2 sm:gap-1">
+              {single.map(renderCard)}
+            </div>
+          )}
+          {double.length > 0 && (
+            <>
+              <div className="text-[10px] font-semibold text-amber-500 mt-2 mb-1">◆ {t("inventoryDoubleTone")}</div>
+              <div className="grid grid-cols-2 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-10 xl:grid-cols-12 gap-2 sm:gap-1">
+                {double.map(renderCard)}
+              </div>
+            </>
+          )}
+          {other.length > 0 && (
+            <>
+              <div className="text-[10px] font-semibold text-stone-400 mt-2 mb-1">{t("inventoryOtherItems")}</div>
+              <div className="grid grid-cols-2 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-10 xl:grid-cols-12 gap-2 sm:gap-1">
+                {other.map(renderCard)}
+              </div>
+            </>
+          )}
+        </>
+      );
+    }
+    return (
+      <div className="grid grid-cols-2 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-10 xl:grid-cols-12 gap-2 sm:gap-1">
+        {sortItemsForMode(items, sortMode).map(renderCard)}
+      </div>
+    );
+  };
+
+  const sortOptions = [
+    ["dye", t("inventorySortDye")],
+    ["stock", t("inventorySortStock")],
+    ["itemNo", t("inventorySortItemNo")],
+    ["recent", t("inventorySortRecent")],
+  ];
+
   return (
     <div className="max-w-6xl">
+      <datalist id="inventoryBrandOptions">{brandList.map((b) => <option key={b} value={b} />)}</datalist>
+      <datalist id="inventoryCategoryOptions">{categoryList.map((c) => <option key={c} value={c} />)}</datalist>
+
       <div className="flex items-center justify-between flex-wrap gap-3 mb-5">
         <h1 className="font-display text-2xl font-light text-stone-800" dangerouslySetInnerHTML={{ __html: t("inventoryTitle") }} />
         {isAdmin && (
@@ -3451,13 +3692,13 @@ function InventoryPage({
       {showAddForm && isAdmin && (
         <div className="flex flex-wrap items-end gap-2 bg-stone-50 border border-stone-200 rounded-xl p-3 mb-4">
           <GField label={t("inventoryCategory")}>
-            <input value={newCategory} onChange={(e) => setNewCategory(e.target.value)} className="ginput" placeholder={lang === "zh" ? "例：指甲油" : "e.g. Nail Polish"} />
+            <input value={newCategory} onChange={(e) => setNewCategory(e.target.value)} list="inventoryCategoryOptions" className="ginput" placeholder={t("inventoryCategoryPlaceholder")} />
           </GField>
           <GField label={t("inventoryBrand")}>
-            <input value={newBrand} onChange={(e) => setNewBrand(e.target.value)} className="ginput" placeholder="e.g. OPI" />
+            <input value={newBrand} onChange={(e) => setNewBrand(e.target.value)} list="inventoryBrandOptions" className="ginput" placeholder={t("inventoryBrandPlaceholder")} />
           </GField>
           <GField label={t("inventoryItemNo")}>
-            <input value={newItemNo} onChange={(e) => setNewItemNo(e.target.value)} className="ginput" placeholder="A001" />
+            <input value={newItemNo} onChange={(e) => setNewItemNo(e.target.value)} className="ginput" placeholder="6.1" />
           </GField>
           <GField label={t("inventoryQty")}>
             <input type="number" value={newQty} onChange={(e) => setNewQty(e.target.value)} className="ginput" placeholder="0" />
@@ -3468,7 +3709,7 @@ function InventoryPage({
         </div>
       )}
 
-      {/* search + category/brand filter + sort + threshold */}
+      {/* search + category/brand filter + threshold */}
       <div className="flex flex-wrap items-center gap-3 mb-3">
         <div className="relative flex-1 min-w-[180px]">
           <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" />
@@ -3489,10 +3730,12 @@ function InventoryPage({
           className={`text-xs font-medium px-3 py-2 rounded-lg border transition ${groupEnabled ? "bg-rose-400 text-white border-rose-400" : "border-stone-200 text-stone-500 hover:border-rose-300"}`}>
           {t("inventoryGroupEnabled")}
         </button>
-        <button type="button" onClick={() => setSortLowFirst((v) => !v)}
-          className={`text-xs font-medium px-3 py-2 rounded-lg border transition ${sortLowFirst ? "bg-rose-400 text-white border-rose-400" : "border-stone-200 text-stone-500 hover:border-rose-300"}`}>
-          {t("inventorySortLow")}
-        </button>
+        {groupEnabled && (
+          <div className="flex items-center gap-1">
+            <button type="button" onClick={collapseAll} className="text-[11px] font-medium px-2 py-1.5 rounded-lg border border-stone-200 text-stone-500 hover:border-rose-300 transition">{t("inventoryCollapseAll")}</button>
+            <button type="button" onClick={expandAll} className="text-[11px] font-medium px-2 py-1.5 rounded-lg border border-stone-200 text-stone-500 hover:border-rose-300 transition">{t("inventoryExpandAll")}</button>
+          </div>
+        )}
         {isAdmin && (
           <div className="flex items-center gap-1.5 text-xs text-stone-500">
             <span>{t("inventoryLowStockThreshold")}</span>
@@ -3513,6 +3756,17 @@ function InventoryPage({
         )}
       </div>
 
+      {/* sort mode selector */}
+      <div className="flex flex-wrap items-center gap-1.5 mb-4">
+        <span className="text-xs text-stone-400 mr-0.5">{t("inventorySortMode")}:</span>
+        {sortOptions.map(([mode, label]) => (
+          <button key={mode} type="button" onClick={() => setSortMode(mode)}
+            className={`text-xs font-medium px-3 py-1.5 rounded-full border transition ${sortMode === mode ? "bg-stone-800 text-white border-stone-800" : "border-stone-200 text-stone-500 hover:border-rose-300"}`}>
+            {label}
+          </button>
+        ))}
+      </div>
+
       {/* bulk action toolbar — appears once at least one card is checked in select mode */}
       {isAdmin && selectMode && selectedIds.size > 0 && (
         <div className="flex flex-wrap items-center gap-2 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2.5 mb-4">
@@ -3520,7 +3774,7 @@ function InventoryPage({
             {t("inventorySelectedCount")} {selectedIds.size}
           </span>
           <input
-            value={bulkBrand} onChange={(e) => setBulkBrand(e.target.value)}
+            value={bulkBrand} onChange={(e) => setBulkBrand(e.target.value)} list="inventoryBrandOptions"
             placeholder={t("inventoryBrand")}
             className="px-2.5 py-1.5 border border-stone-200 rounded-lg text-xs bg-white outline-none focus:border-rose-300 w-32"
           />
@@ -3529,7 +3783,7 @@ function InventoryPage({
             {t("inventoryApplyBrand")}
           </button>
           <input
-            value={bulkCategory} onChange={(e) => setBulkCategory(e.target.value)}
+            value={bulkCategory} onChange={(e) => setBulkCategory(e.target.value)} list="inventoryCategoryOptions"
             placeholder={t("inventoryCategory")}
             className="px-2.5 py-1.5 border border-stone-200 rounded-lg text-xs bg-white outline-none focus:border-rose-300 w-32"
           />
@@ -3560,6 +3814,7 @@ function InventoryPage({
           {groupedTree.map((catGroup) => {
             const catItems = catGroup.brands.flatMap((b) => b.items);
             const catSel = groupSelectionState(catItems);
+            const catCollapsed = catGroup.category && isCollapsed(catKey(catGroup.category));
             return (
               <div key={catGroup.category || "__all__"}>
                 {catGroup.category && (
@@ -3571,37 +3826,46 @@ function InventoryPage({
                         className="w-4 h-4 accent-rose-400 flex-shrink-0" title={t("inventorySelectAll")}
                       />
                     )}
-                    <div className="text-[12px] font-bold tracking-widest uppercase text-stone-600 px-1 pb-1.5 border-b-2 border-stone-200 flex-1">
-                      {catGroup.category} <span className="font-medium normal-case text-stone-300">· {catItems.length}</span>
-                    </div>
+                    <button type="button" onClick={() => toggleCollapse(catKey(catGroup.category))}
+                      className="flex items-center gap-1.5 flex-1 text-left">
+                      {catCollapsed ? <ChevronRight size={14} className="text-stone-400 flex-shrink-0" /> : <ChevronDown size={14} className="text-stone-400 flex-shrink-0" />}
+                      <div className="text-[12px] font-bold tracking-widest uppercase text-stone-600 pb-1.5 border-b-2 border-stone-200 flex-1">
+                        {catGroup.category} <span className="font-medium normal-case text-stone-300">· {catItems.length}</span>
+                      </div>
+                    </button>
                   </div>
                 )}
-                <div className="space-y-3.5 pl-0.5">
-                  {catGroup.brands.map((brandGroup) => {
-                    const brandSel = groupSelectionState(brandGroup.items);
-                    return (
-                      <div key={brandGroup.brand || "__all__"}>
-                        {brandGroup.brand && (
-                          <div className="flex items-center gap-2 mb-1.5">
-                            {selectMode && (
-                              <input
-                                type="checkbox" checked={brandSel.all} ref={(el) => { if (el) el.indeterminate = brandSel.some; }}
-                                onChange={() => toggleGroupSelect(brandGroup.items)}
-                                className="w-3.5 h-3.5 accent-rose-400 flex-shrink-0" title={t("inventorySelectAll")}
-                              />
-                            )}
-                            <div className="text-[11px] font-bold tracking-wide uppercase text-stone-400 px-1 pb-1 border-b border-stone-100 flex-1">
-                              {brandGroup.brand} <span className="font-medium normal-case text-stone-300">· {brandGroup.items.length}</span>
+                {!catCollapsed && (
+                  <div className="space-y-3.5 pl-0.5">
+                    {catGroup.brands.map((brandGroup) => {
+                      const brandSel = groupSelectionState(brandGroup.items);
+                      const bCollapsed = brandGroup.brand && isCollapsed(brandKey(catGroup.category, brandGroup.brand));
+                      return (
+                        <div key={brandGroup.brand || "__all__"}>
+                          {brandGroup.brand && (
+                            <div className="flex items-center gap-2 mb-1.5">
+                              {selectMode && (
+                                <input
+                                  type="checkbox" checked={brandSel.all} ref={(el) => { if (el) el.indeterminate = brandSel.some; }}
+                                  onChange={() => toggleGroupSelect(brandGroup.items)}
+                                  className="w-3.5 h-3.5 accent-rose-400 flex-shrink-0" title={t("inventorySelectAll")}
+                                />
+                              )}
+                              <button type="button" onClick={() => toggleCollapse(brandKey(catGroup.category, brandGroup.brand))}
+                                className="flex items-center gap-1 flex-1 text-left">
+                                {bCollapsed ? <ChevronRight size={12} className="text-stone-300 flex-shrink-0" /> : <ChevronDown size={12} className="text-stone-300 flex-shrink-0" />}
+                                <div className="text-[11px] font-bold tracking-wide uppercase text-stone-400 pb-1 border-b border-stone-100 flex-1">
+                                  {brandGroup.brand} <span className="font-medium normal-case text-stone-300">· {brandGroup.items.length}</span>
+                                </div>
+                              </button>
                             </div>
-                          </div>
-                        )}
-                        <div className="grid grid-cols-2 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-10 xl:grid-cols-12 gap-2 sm:gap-1">
-                          {brandGroup.items.map(renderCard)}
+                          )}
+                          {!bCollapsed && renderItemGrid(brandGroup.items)}
                         </div>
-                      </div>
-                    );
-                  })}
-                </div>
+                      );
+                    })}
+                  </div>
+                )}
               </div>
             );
           })}
@@ -3638,6 +3902,9 @@ function InventoryPage({
      4 columns → Category / Brand / Item No. / Q'ty
    A stray header row (text in the Q'ty column) is
    automatically skipped since it won't parse as a number.
+   See AppInner's bulkUpsertInventory for the matching rule
+   that keeps the same item no. under different brands from
+   colliding into one record.
 ──────────────────────────────────────────────────── */
 
 function InventoryPasteModal({ t, lang, onClose, onConfirm }) {
@@ -3696,7 +3963,8 @@ function InventoryPasteModal({ t, lang, onClose, onConfirm }) {
           <button type="button" onClick={onClose} className="text-stone-400 hover:text-rose-400 transition"><X size={20} /></button>
         </div>
         <div className="px-6 py-4">
-          <p className="text-xs text-stone-400 mb-3 leading-relaxed">{t("inventoryPasteDesc")}</p>
+          <p className="text-xs text-stone-400 mb-2 leading-relaxed">{t("inventoryPasteDesc")}</p>
+          <p className="text-xs text-amber-500 mb-3 leading-relaxed">{t("inventoryPasteAmbiguousNote")}</p>
           <textarea
             value={text}
             onChange={(e) => setText(e.target.value)}
@@ -3728,7 +3996,6 @@ function InventoryPasteModal({ t, lang, onClose, onConfirm }) {
     </div>
   );
 }
-
 /* ────────────────────────────────────────────────────
    RECORD USAGE MODAL
    Flow: pick a consumption date → (items already chosen via
