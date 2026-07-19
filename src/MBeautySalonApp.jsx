@@ -475,6 +475,12 @@ const T = {
   inventoryPasteStatusNew: { zh: "新增", en: "New" },
   inventoryPasteStatusUpdate: { zh: "更新", en: "Update" },
   inventoryPasteStatusSkip: { zh: "略過（同編號跨品牌）", en: "Skipped (dup. item no. across brands)" },
+  inventoryPasteDefaultCategory: { zh: "預設種類（貼上內容未含種類欄位時套用）", en: "Default Category (used when a row has no category column)" },
+  inventoryPasteDefaultBrand: { zh: "預設品牌（貼上內容未含品牌欄位時套用）", en: "Default Brand (used when a row has no brand column)" },
+  inventoryPasteNoDefault: { zh: "不指定", en: "None" },
+  inventoryPasteAddNew: { zh: "+ 新增...", en: "+ Add new..." },
+  inventoryPasteNewCategoryPlaceholder: { zh: "輸入新種類名稱", en: "Enter new category name" },
+  inventoryPasteNewBrandPlaceholder: { zh: "輸入新品牌名稱", en: "Enter new brand name" },
   inventoryPasteDesc: { zh: "從 Excel 複製兩欄資料（品項編號、數量）後直接貼在下方，系統會自動比對：已存在的品項會更新數量、沒出現過的品項會自動新增。", en: "Copy two columns from Excel (Item No., Qty) and paste below. Existing items will be updated and new ones added automatically." },
   inventoryPasteMatched: { zh: "可匯入筆數", en: "Rows to import" },
   inventoryPasteInvalid: { zh: "無法辨識", en: "Unrecognized" },
@@ -4020,6 +4026,26 @@ function InventoryPasteModal({ t, lang, inventory, onClose, onConfirm }) {
   const [step, setStep] = useState("paste"); // "paste" | "preview"
   const [submitting, setSubmitting] = useState(false);
 
+  // Default category/brand dropdowns — applied to any pasted row that
+  // doesn't already specify its own category/brand column, so a plain
+  // 2-column paste (Item No. / Q'ty) can still be tagged correctly.
+  const categoryList = useMemo(() => {
+    const set = new Set(inventory.map((i) => (i.category || "").trim()).filter(Boolean));
+    return [...set].sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }));
+  }, [inventory]);
+  const brandList = useMemo(() => {
+    const set = new Set(inventory.map((i) => (i.brand || "").trim()).filter(Boolean));
+    return [...set].sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }));
+  }, [inventory]);
+
+  const [categorySelect, setCategorySelect] = useState(""); // "" | "__new__" | existing category
+  const [brandSelect, setBrandSelect] = useState("");
+  const [newCategoryText, setNewCategoryText] = useState("");
+  const [newBrandText, setNewBrandText] = useState("");
+
+  const defaultCategory = categorySelect === "__new__" ? newCategoryText.trim() : categorySelect;
+  const defaultBrand = brandSelect === "__new__" ? newBrandText.trim() : brandSelect;
+
   const parsed = useMemo(() => {
     const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
     const rows = [];
@@ -4056,10 +4082,21 @@ function InventoryPasteModal({ t, lang, inventory, onClose, onConfirm }) {
     return { rows, invalid };
   }, [text]);
 
+  // Fill in the dropdown defaults for any row that didn't bring its own
+  // category/brand from the pasted text. A row's own column always wins.
+  const effectiveRows = useMemo(() => {
+    return parsed.rows.map((r) => {
+      const out = { ...r };
+      if (out.category === undefined && defaultCategory) out.category = defaultCategory;
+      if (out.brand === undefined && defaultBrand) out.brand = defaultBrand;
+      return out;
+    });
+  }, [parsed.rows, defaultCategory, defaultBrand]);
+
   // Preview status per row — mirrors AppInner's bulkUpsertInventory matching
   // rule exactly, so what you see here is what will actually happen.
   const preview = useMemo(() => {
-    return parsed.rows.map((r) => {
+    return effectiveRows.map((r) => {
       const hasBrandColumn = r.brand !== undefined && r.brand !== "";
       const no = r.itemNo.trim().toLowerCase();
       if (hasBrandColumn) {
@@ -4071,7 +4108,7 @@ function InventoryPasteModal({ t, lang, inventory, onClose, onConfirm }) {
       if (candidates.length > 1) return { ...r, status: "skip" };
       return { ...r, status: candidates.length === 1 ? "update" : "new" };
     });
-  }, [parsed.rows, inventory]);
+  }, [effectiveRows, inventory]);
 
   const counts = useMemo(() => ({
     new: preview.filter((r) => r.status === "new").length,
@@ -4083,7 +4120,7 @@ function InventoryPasteModal({ t, lang, inventory, onClose, onConfirm }) {
 
   const handleConfirm = async () => {
     setSubmitting(true);
-    await onConfirm(parsed.rows);
+    await onConfirm(effectiveRows);
     setSubmitting(false);
     onClose();
   };
@@ -4096,7 +4133,7 @@ function InventoryPasteModal({ t, lang, inventory, onClose, onConfirm }) {
 
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={onClose}>
-      <div className="bg-white rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto shadow-2xl" onClick={(e) => e.stopPropagation()}>
+      <div className="bg-white rounded-2xl w-full max-w-xl max-h-[90vh] overflow-y-auto shadow-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-6 py-4 border-b border-stone-100">
           <h2 className="font-display text-xl font-light text-stone-800">
             {step === "paste" ? t("inventoryPasteTitle") : t("inventoryPastePreviewTitle")}
@@ -4109,6 +4146,43 @@ function InventoryPasteModal({ t, lang, inventory, onClose, onConfirm }) {
             <div className="px-6 py-4">
               <p className="text-xs text-stone-400 mb-2 leading-relaxed">{t("inventoryPasteDesc")}</p>
               <p className="text-xs text-amber-500 mb-3 leading-relaxed">{t("inventoryPasteAmbiguousNote")}</p>
+
+              {/* Default category / brand — applied to rows without their own column */}
+              <div className="grid grid-cols-2 gap-2.5 mb-3">
+                <div>
+                  <label className="text-[11px] font-medium text-stone-400 mb-1 block">{t("inventoryPasteDefaultCategory")}</label>
+                  <select value={categorySelect} onChange={(e) => setCategorySelect(e.target.value)}
+                    className="w-full px-2.5 py-2 border border-stone-200 rounded-lg text-xs bg-white outline-none focus:border-rose-300">
+                    <option value="">{t("inventoryPasteNoDefault")}</option>
+                    {categoryList.map((c) => <option key={c} value={c}>{c}</option>)}
+                    <option value="__new__">{t("inventoryPasteAddNew")}</option>
+                  </select>
+                  {categorySelect === "__new__" && (
+                    <input
+                      autoFocus value={newCategoryText} onChange={(e) => setNewCategoryText(e.target.value)}
+                      placeholder={t("inventoryPasteNewCategoryPlaceholder")}
+                      className="w-full mt-1.5 px-2.5 py-2 border border-rose-300 rounded-lg text-xs outline-none"
+                    />
+                  )}
+                </div>
+                <div>
+                  <label className="text-[11px] font-medium text-stone-400 mb-1 block">{t("inventoryPasteDefaultBrand")}</label>
+                  <select value={brandSelect} onChange={(e) => setBrandSelect(e.target.value)}
+                    className="w-full px-2.5 py-2 border border-stone-200 rounded-lg text-xs bg-white outline-none focus:border-rose-300">
+                    <option value="">{t("inventoryPasteNoDefault")}</option>
+                    {brandList.map((b) => <option key={b} value={b}>{b}</option>)}
+                    <option value="__new__">{t("inventoryPasteAddNew")}</option>
+                  </select>
+                  {brandSelect === "__new__" && (
+                    <input
+                      autoFocus value={newBrandText} onChange={(e) => setNewBrandText(e.target.value)}
+                      placeholder={t("inventoryPasteNewBrandPlaceholder")}
+                      className="w-full mt-1.5 px-2.5 py-2 border border-rose-300 rounded-lg text-xs outline-none"
+                    />
+                  )}
+                </div>
+              </div>
+
               <textarea
                 value={text}
                 onChange={(e) => setText(e.target.value)}
