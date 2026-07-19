@@ -4,12 +4,13 @@ import {
   Calendar, Scissors, MapPin, LogOut, Plus, X, Trash2,
   Pencil, ChevronLeft, ChevronRight, Image as ImageIcon, Clock,
   Eye, EyeOff, Lock, User, Users, Menu, Phone, Database, Send, RefreshCw, ClipboardCopy, FileText,
-  ShoppingCart, Receipt, DollarSign, TrendingUp, Settings, ChevronDown, ChevronUp, BarChart2
+  ShoppingCart, Receipt, DollarSign, TrendingUp, Settings, ChevronDown, ChevronUp, BarChart2,
+  Package, Search, Upload
 } from "lucide-react";
 
 import { initializeApp } from "firebase/app";
 import {
-  getFirestore, collection, addDoc, getDocs, getDoc, query, orderBy, serverTimestamp,
+  getFirestore, collection, addDoc, getDocs, getDoc, query, orderBy, where, serverTimestamp,
   doc, setDoc, updateDoc, deleteDoc, onSnapshot, writeBatch,
 } from "firebase/firestore";
 
@@ -437,6 +438,55 @@ const T = {
   submittedAt: { zh: "填單時間", en: "Submitted" },
   sourceGuest: { zh: "線上預約", en: "Online" },
   sourceAdmin: { zh: "現場 / 管理員建立", en: "In-store / Admin" },
+
+  /* Guest booking — extra fields added to match admin's booking form */
+  guestStylist: { zh: "指定技師（選填）", en: "Preferred Stylist (optional)" },
+  guestNotes: { zh: "備註（選填）", en: "Notes (optional)" },
+
+  /* Inventory management */
+  navInventory: { zh: "庫存管理", en: "Inventory" },
+  inventoryTitle: { zh: "庫存<span class='text-rose-400'>管理</span>", en: "Inventory <span class='text-rose-400'>Management</span>" },
+  inventoryReadonlyNotice: { zh: "現場端僅供查看庫存，如需更新請聯繫管理員。", en: "Staff view is read-only. Contact the admin to update stock." },
+  inventoryTotalItems: { zh: "總項目數", en: "Total Items" },
+  inventoryTotalQty: { zh: "總庫存量", en: "Total Quantity" },
+  inventoryLowStock: { zh: "低庫存項目", en: "Low Stock" },
+  inventoryLowStockThreshold: { zh: "低庫存門檻", en: "Low stock threshold" },
+  inventorySearch: { zh: "搜尋品項編號...", en: "Search item no..." },
+  inventorySortLow: { zh: "依庫存量排序", en: "Sort by lowest stock" },
+  inventoryAddItem: { zh: "新增品項", en: "Add Item" },
+  inventoryItemNo: { zh: "品項編號", en: "Item No." },
+  inventoryQty: { zh: "數量", en: "Qty" },
+  inventoryItemNoRequired: { zh: "請輸入品項編號", en: "Please enter an item number" },
+  inventorySaved: { zh: "已儲存", en: "Saved" },
+  inventoryDeleted: { zh: "已刪除", en: "Deleted" },
+  inventoryConfirmDelete: { zh: "確定要刪除此品項嗎？", en: "Delete this item?" },
+  inventoryEmpty: { zh: "尚無庫存資料，請點選「貼上更新」批次匯入", en: 'No inventory yet — use "Paste Update" to import' },
+  inventoryPasteUpdate: { zh: "貼上更新", en: "Paste Update" },
+  inventoryPasteTitle: { zh: "從 Excel 貼上更新庫存", en: "Paste Update from Excel" },
+  inventoryPasteDesc: { zh: "從 Excel 複製兩欄資料（品項編號、數量）後直接貼在下方，系統會自動比對：已存在的品項會更新數量、沒出現過的品項會自動新增。", en: "Copy two columns from Excel (Item No., Qty) and paste below. Existing items will be updated and new ones added automatically." },
+  inventoryPasteMatched: { zh: "可匯入筆數", en: "Rows to import" },
+  inventoryPasteInvalid: { zh: "無法辨識", en: "Unrecognized" },
+  inventoryPasteConfirm: { zh: "確認更新", en: "Confirm Update" },
+  inventoryBrand: { zh: "品牌", en: "Brand" },
+  inventoryAllBrands: { zh: "全部品牌", en: "All Brands" },
+  inventoryNoBrand: { zh: "未分類", en: "Unbranded" },
+  inventoryGroupByBrand: { zh: "依品牌分組", en: "Group by Brand" },
+
+  /* Inventory usage report (date-range analytics) */
+  inventoryUsageReport: { zh: "用量統計", en: "Usage Report" },
+  inventoryUsageDesc: { zh: "依日期區間查詢各品項的用量與補貨紀錄，資料會在每次貼上更新或手動調整數量時自動記錄。", en: "Query usage and restock activity per item within a date range. Records are captured automatically on every paste-update or manual quantity change." },
+  inventoryStartDate: { zh: "起始日期", en: "Start Date" },
+  inventoryEndDate: { zh: "結束日期", en: "End Date" },
+  inventoryQuickToday: { zh: "今天", en: "Today" },
+  inventoryQuick7: { zh: "近7天", en: "Last 7 Days" },
+  inventoryQuickMonth: { zh: "本月", en: "This Month" },
+  inventoryQuick30: { zh: "近30天", en: "Last 30 Days" },
+  inventoryRunReport: { zh: "查詢", en: "Run Report" },
+  inventoryLoadingReport: { zh: "查詢中...", en: "Running..." },
+  inventoryReportEmpty: { zh: "此區間尚無異動紀錄", en: "No activity recorded in this range" },
+  inventoryUsed: { zh: "用量", en: "Used" },
+  inventoryRestocked: { zh: "補貨", en: "Restocked" },
+  inventoryNetChange: { zh: "淨變化", en: "Net Change" },
 };
 
 /* ════════════════════════════════════════════════════
@@ -544,6 +594,10 @@ function AppInner() {
   // POS
   const [posRecords, setPosRecords] = useState([]);
   const [payrollSettings, setPayrollSettings] = useState({});
+
+  // Inventory — synced with Firestore in real time
+  const [inventory, setInventory] = useState([]);
+  const [inventorySettings, setInventorySettings] = useState({ lowStockThreshold: 10 });
 
   // calendar
   const [branchIdx, setBranchIdx] = useState(0);
@@ -751,6 +805,27 @@ function AppInner() {
       ref,
       (snap) => { if (snap.exists()) setPayrollSettings(snap.data()); },
       (err) => console.error("payroll settings sync error:", err)
+    );
+    return unsub;
+  }, []);
+
+  // Inventory — collection "inventory" (doc id = sanitized item no.)
+  useEffect(() => {
+    const unsub = onSnapshot(
+      collection(db, "inventory"),
+      (snap) => setInventory(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
+      (err) => console.error("inventory sync error:", err)
+    );
+    return unsub;
+  }, []);
+
+  // Inventory settings — doc "settings/inventory" (low-stock threshold)
+  useEffect(() => {
+    const ref = doc(db, "settings", "inventory");
+    const unsub = onSnapshot(
+      ref,
+      (snap) => { if (snap.exists()) setInventorySettings((prev) => ({ ...prev, ...snap.data() })); },
+      (err) => console.error("inventorySettings sync error:", err)
     );
     return unsub;
   }, []);
@@ -988,6 +1063,135 @@ function AppInner() {
     }
   };
 
+  /* ───── INVENTORY HANDLERS ─────
+     Architecture note for future usage-analytics:
+     - "inventory" holds only the CURRENT snapshot per item (fast to read/render
+       for 150–180 cards at once).
+     - Every quantity change (manual edit, +/- bump, or bulk Excel paste) also
+       appends an immutable record to "inventoryMovements" with qtyBefore/
+       qtyAfter/delta + a plain-string dateKey ("YYYY-MM-DD") and monthKey
+       ("YYYY-MM"). That log is what later date-range usage reports query —
+       we never need to rewrite history, only read a range of dateKey values.
+  ────────────────────────────────────────────────────── */
+  // Firestore doc IDs can't contain "/", so sanitize while keeping the
+  // original itemNo text for display.
+  const inventoryDocId = (itemNo) => String(itemNo).trim().replace(/\//g, "-");
+
+  const logInventoryMovement = async ({ itemId, itemNo, brand, qtyBefore, qtyAfter, changeType }) => {
+    if (qtyBefore === qtyAfter && changeType !== "new_item") return; // no real change, skip noise
+    try {
+      const today = todayStr();
+      await addDoc(collection(db, "inventoryMovements"), {
+        itemId, itemNo, brand: brand || "",
+        qtyBefore, qtyAfter, delta: qtyAfter - qtyBefore,
+        changeType, // "new_item" | "manual_edit" | "bump" | "bulk_paste"
+        dateKey: today, monthKey: today.slice(0, 7),
+        recordedAt: serverTimestamp(),
+      });
+    } catch (err) {
+      console.error("logInventoryMovement error:", err);
+      // Non-fatal — the current-qty write already succeeded, so we don't
+      // block the user with an error toast for a background log entry.
+    }
+  };
+
+  const saveInventoryItem = async (itemNo, qty, brand, changeType = "manual_edit") => {
+    const trimmed = String(itemNo || "").trim();
+    if (!trimmed) {
+      showToast(t("inventoryItemNoRequired"), "warn");
+      return;
+    }
+    const id = inventoryDocId(trimmed);
+    const existing = inventory.find((i) => i.id === id);
+    const qtyBefore = existing ? Number(existing.qty) || 0 : 0;
+    const qtyAfter = Number(qty) || 0;
+    const finalBrand = brand !== undefined ? brand : (existing?.brand || "");
+    try {
+      await setDoc(
+        doc(db, "inventory", id),
+        { itemNo: trimmed, brand: finalBrand, qty: qtyAfter, updatedAt: serverTimestamp() },
+        { merge: true }
+      );
+      logInventoryMovement({
+        itemId: id, itemNo: trimmed, brand: finalBrand, qtyBefore, qtyAfter,
+        changeType: existing ? changeType : "new_item",
+      });
+      showToast(t("inventorySaved"), "success");
+    } catch (err) {
+      console.error("saveInventoryItem error:", err);
+      showToast(t("syncError"), "warn");
+    }
+  };
+
+  const deleteInventoryItem = async (id) => {
+    if (!window.confirm(t("inventoryConfirmDelete"))) return;
+    try {
+      await deleteDoc(doc(db, "inventory", id));
+      showToast(t("inventoryDeleted"), "success");
+    } catch (err) {
+      console.error("deleteInventoryItem error:", err);
+      showToast(t("syncError"), "warn");
+    }
+  };
+
+  // Bulk upsert from an Excel paste: rows = [{ itemNo, qty, brand? }, ...].
+  // Existing item numbers get their qty (and brand, if supplied) updated;
+  // new ones are created. Every row also gets a movement log entry.
+  // Firestore batches are capped at 500 ops and each row writes 2 ops
+  // (inventory doc + movement doc), so we chunk conservatively.
+  const bulkUpsertInventory = async (rows) => {
+    if (!rows || !rows.length) return;
+    try {
+      const existingMap = new Map(inventory.map((i) => [i.id, i]));
+      const today = todayStr();
+      let updated = 0, added = 0;
+      for (let i = 0; i < rows.length; i += 200) {
+        const chunk = rows.slice(i, i + 200);
+        const batch = writeBatch(db);
+        chunk.forEach((r) => {
+          const itemNo = String(r.itemNo).trim();
+          const id = inventoryDocId(itemNo);
+          const prev = existingMap.get(id);
+          const qtyBefore = prev ? Number(prev.qty) || 0 : 0;
+          const qtyAfter = Number(r.qty) || 0;
+          const brand = r.brand !== undefined && r.brand !== "" ? r.brand : (prev?.brand || "");
+          if (prev) updated++; else added++;
+          batch.set(
+            doc(db, "inventory", id),
+            { itemNo, brand, qty: qtyAfter, updatedAt: serverTimestamp() },
+            { merge: true }
+          );
+          batch.set(doc(collection(db, "inventoryMovements")), {
+            itemId: id, itemNo, brand,
+            qtyBefore, qtyAfter, delta: qtyAfter - qtyBefore,
+            changeType: prev ? "bulk_paste" : "new_item",
+            dateKey: today, monthKey: today.slice(0, 7),
+            recordedAt: serverTimestamp(),
+          });
+        });
+        await batch.commit();
+      }
+      showToast(
+        lang === "zh" ? `已更新 ${updated} 項、新增 ${added} 項` : `Updated ${updated}, added ${added} item(s)`,
+        "success"
+      );
+    } catch (err) {
+      console.error("bulkUpsertInventory error:", err);
+      showToast(t("syncError"), "warn");
+    }
+  };
+
+  const saveInventoryThreshold = async (value) => {
+    const num = Number(value) || 0;
+    setInventorySettings((prev) => ({ ...prev, lowStockThreshold: num }));
+    try {
+      await setDoc(doc(db, "settings", "inventory"), { lowStockThreshold: num }, { merge: true });
+    } catch (err) {
+      console.error("saveInventoryThreshold error:", err);
+      showToast(t("syncError"), "warn");
+    }
+  };
+
   /* ───── STAFF LIST HANDLERS ───── */
   const addStaff = async (branch, name) => {
     const trimmed = name.trim();
@@ -1197,6 +1401,7 @@ function AppInner() {
               active={page === "pending"}
               onClick={() => { setPage("pending"); setSidebarOpen(false); }}
             />
+            <SidebarItem icon={<Package size={17} />} label={t("navInventory")} active={page === "inventory"} onClick={() => { setPage("inventory"); setSidebarOpen(false); }} />
             {user.role === "admin" && (
               <SidebarItem icon={<Users size={17} />} label={t("navStaff")} active={page === "staff"} onClick={() => { setPage("staff"); setSidebarOpen(false); }} />
             )}
@@ -1253,6 +1458,19 @@ function AppInner() {
           )}
           {page === "accounts" && user.role === "admin" && (
             <AccountsPage t={t} lang={lang} accounts={accounts} onSave={saveAccount} onDelete={deleteAccount} />
+          )}
+          {page === "inventory" && (
+            <InventoryPage
+              t={t} lang={lang}
+              isAdmin={user.role === "admin"}
+              inventory={inventory}
+              lowStockThreshold={inventorySettings.lowStockThreshold}
+              onSaveThreshold={saveInventoryThreshold}
+              onSaveItem={saveInventoryItem}
+              onDeleteItem={deleteInventoryItem}
+              onBulkUpsert={bulkUpsertInventory}
+              showToast={showToast}
+            />
           )}
           {page === "pos" && (
             <POSPage
@@ -1636,6 +1854,7 @@ function GuestBookingForm({ t, lang, services, branchInfo, onSubmitted }) {
     name: "", phone: "", social: "",
     branch: "0", date: "", time: "",
     contactVia: "", serviceIds: [], payment: "",
+    staff: "", note: "",
   });
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
@@ -1690,6 +1909,9 @@ function GuestBookingForm({ t, lang, services, branchInfo, onSubmitted }) {
             ))}
           </select>
         </GField>
+        <GField label={t("guestStylist")}>
+          <input value={form.staff} onChange={(e) => set("staff", e.target.value)} className="ginput" placeholder="e.g. Jenny" />
+        </GField>
         <GField label={t("guestDate")}>
           <input type="date" value={form.date} onChange={(e) => set("date", e.target.value)} className="ginput"
             min={new Date().toISOString().slice(0,10)} />
@@ -1711,6 +1933,9 @@ function GuestBookingForm({ t, lang, services, branchInfo, onSubmitted }) {
             <option value="">—</option>
             {paymentOptions.map((o) => <option key={o} value={o}>{o}</option>)}
           </select>
+        </GField>
+        <GField label={t("guestNotes")} full>
+          <input value={form.note} onChange={(e) => set("note", e.target.value)} className="ginput" placeholder={lang === "zh" ? "有任何需求都可以告訴我們" : "Let us know anything we should prepare"} />
         </GField>
         <GField label={t("guestService")} full>
           <div className="border border-stone-200 rounded-xl p-3 bg-stone-50 max-h-64 overflow-y-auto">
@@ -2750,6 +2975,502 @@ function AccountsPage({ t, lang, accounts, onSave, onDelete }) {
     </div>
   );
 }
+
+/* ════════════════════════════════════════════════════
+   INVENTORY PAGE
+   Visible to both admin (editable) and staff (read-only).
+   - Compact grid so 150–180 items are scannable at a glance
+   - Card order: Brand → Item No. → Qty
+   - Optional grouping / filtering by brand
+   - Search box to jump to a specific item no.
+   - Inline qty +/- and click-to-edit for admins
+   - "Paste Update" lets admins bulk-import/update straight from
+     an Excel copy: "Item No.<tab>Q'ty" (2 columns), or
+     "Brand<tab>Item No.<tab>Q'ty" (3 columns) when they also
+     want to set/refresh the brand at the same time
+   - "Usage Report" (admin only) queries the inventoryMovements
+     log by date range — see architecture note on saveInventoryItem
+     / bulkUpsertInventory / logInventoryMovement in AppInner
+════════════════════════════════════════════════════ */
+
+function InventoryPage({
+  t, lang, isAdmin, inventory, lowStockThreshold,
+  onSaveThreshold, onSaveItem, onDeleteItem, onBulkUpsert, showToast,
+}) {
+  const [search, setSearch] = useState("");
+  const [sortLowFirst, setSortLowFirst] = useState(false);
+  const [brandFilter, setBrandFilter] = useState("");
+  const [groupByBrand, setGroupByBrand] = useState(true);
+  const [showPasteModal, setShowPasteModal] = useState(false);
+  const [showAddForm, setShowAddForm] = useState(false);
+  const [newBrand, setNewBrand] = useState("");
+  const [newItemNo, setNewItemNo] = useState("");
+  const [newQty, setNewQty] = useState("");
+  const [editingId, setEditingId] = useState(null);
+  const [editQty, setEditQty] = useState("");
+  const [editingBrandId, setEditingBrandId] = useState(null);
+  const [editBrand, setEditBrand] = useState("");
+  const [thresholdDraft, setThresholdDraft] = useState(lowStockThreshold ?? 10);
+
+  useEffect(() => { setThresholdDraft(lowStockThreshold ?? 10); }, [lowStockThreshold]);
+
+  const threshold = Number(lowStockThreshold ?? 10);
+
+  const brandList = useMemo(() => {
+    const set = new Set(inventory.map((i) => (i.brand || "").trim()).filter(Boolean));
+    return [...set].sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }));
+  }, [inventory]);
+
+  const filtered = useMemo(() => {
+    let list = inventory;
+    if (search.trim()) {
+      const q = search.trim().toLowerCase();
+      list = list.filter((i) => (i.itemNo || "").toLowerCase().includes(q) || (i.brand || "").toLowerCase().includes(q));
+    }
+    if (brandFilter) list = list.filter((i) => (i.brand || "") === brandFilter);
+    return [...list].sort((a, b) => {
+      if (sortLowFirst) return (Number(a.qty) || 0) - (Number(b.qty) || 0);
+      return (a.itemNo || "").localeCompare(b.itemNo || "", undefined, { numeric: true, sensitivity: "base" });
+    });
+  }, [inventory, search, brandFilter, sortLowFirst]);
+
+  // When grouping, cluster the already-sorted/filtered list under brand headers.
+  const grouped = useMemo(() => {
+    if (!groupByBrand) return [{ brand: null, items: filtered }];
+    const map = new Map();
+    filtered.forEach((item) => {
+      const key = (item.brand || "").trim() || t("inventoryNoBrand");
+      if (!map.has(key)) map.set(key, []);
+      map.get(key).push(item);
+    });
+    return [...map.entries()]
+      .sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true, sensitivity: "base" }))
+      .map(([brand, items]) => ({ brand, items }));
+  }, [filtered, groupByBrand, t]);
+
+  const totalQty = useMemo(() => inventory.reduce((sum, i) => sum + (Number(i.qty) || 0), 0), [inventory]);
+  const lowCount = useMemo(() => inventory.filter((i) => (Number(i.qty) || 0) <= threshold).length, [inventory, threshold]);
+
+  const startEdit = (item) => { setEditingId(item.id); setEditQty(String(item.qty ?? "")); };
+  const commitEdit = (item) => {
+    onSaveItem(item.itemNo, editQty === "" ? 0 : Number(editQty), item.brand);
+    setEditingId(null);
+  };
+  const bump = (item, delta) => {
+    const next = Math.max(0, (Number(item.qty) || 0) + delta);
+    onSaveItem(item.itemNo, next, item.brand, "bump");
+  };
+  const startEditBrand = (item) => { setEditingBrandId(item.id); setEditBrand(item.brand || ""); };
+  const commitBrand = (item) => {
+    onSaveItem(item.itemNo, item.qty, editBrand.trim());
+    setEditingBrandId(null);
+  };
+  const handleAddSubmit = () => {
+    if (!newItemNo.trim()) { showToast(t("inventoryItemNoRequired"), "warn"); return; }
+    onSaveItem(newItemNo, newQty === "" ? 0 : Number(newQty), newBrand.trim());
+    setNewBrand(""); setNewItemNo(""); setNewQty(""); setShowAddForm(false);
+  };
+
+  const renderCard = (item) => {
+    const low = (Number(item.qty) || 0) <= threshold;
+    const editing = editingId === item.id;
+    const editingBrand = editingBrandId === item.id;
+    return (
+      <div key={item.id}
+        className={`rounded-lg border px-3 py-2.5 flex flex-col gap-1.5 ${low ? "bg-rose-50 border-rose-200" : "bg-white border-stone-200"}`}>
+        {/* Brand — shown first per card layout order */}
+        {editingBrand ? (
+          <input
+            autoFocus value={editBrand} onChange={(e) => setEditBrand(e.target.value)}
+            onBlur={() => commitBrand(item)}
+            onKeyDown={(e) => { if (e.key === "Enter") commitBrand(item); if (e.key === "Escape") setEditingBrandId(null); }}
+            className="w-full px-1.5 py-0.5 border border-rose-300 rounded text-[11px] outline-none"
+            placeholder={t("inventoryBrand")}
+          />
+        ) : (
+          <span
+            onClick={() => isAdmin && startEditBrand(item)}
+            className={`text-[11px] font-semibold uppercase tracking-wide truncate ${isAdmin ? "cursor-pointer hover:text-rose-500" : ""} ${item.brand ? "text-stone-500" : "text-stone-300 italic"}`}
+            title={item.brand || t("inventoryNoBrand")}
+          >
+            {item.brand || t("inventoryNoBrand")}
+          </span>
+        )}
+
+        {/* Item No. */}
+        <div className="flex items-center justify-between gap-1">
+          <span className="text-xs font-semibold text-stone-700 truncate" title={item.itemNo}>{item.itemNo}</span>
+          {isAdmin && (
+            <button type="button" onClick={() => onDeleteItem(item.id)} className="text-stone-300 hover:text-rose-500 transition flex-shrink-0">
+              <X size={12} />
+            </button>
+          )}
+        </div>
+
+        {/* Qty */}
+        {editing ? (
+          <input
+            autoFocus type="number" value={editQty}
+            onChange={(e) => setEditQty(e.target.value)}
+            onBlur={() => commitEdit(item)}
+            onKeyDown={(e) => { if (e.key === "Enter") commitEdit(item); if (e.key === "Escape") setEditingId(null); }}
+            className="w-full px-1.5 py-1 border border-rose-300 rounded text-sm outline-none"
+          />
+        ) : isAdmin ? (
+          <div className="flex items-center justify-between gap-1">
+            <button type="button" onClick={() => bump(item, -1)} className="w-6 h-6 flex items-center justify-center rounded bg-stone-100 hover:bg-stone-200 text-stone-500 text-sm font-bold">−</button>
+            <span onClick={() => startEdit(item)}
+              className={`text-sm font-bold cursor-pointer ${low ? "text-rose-500" : "text-stone-800"}`}>
+              {item.qty ?? 0}
+            </span>
+            <button type="button" onClick={() => bump(item, 1)} className="w-6 h-6 flex items-center justify-center rounded bg-stone-100 hover:bg-stone-200 text-stone-500 text-sm font-bold">+</button>
+          </div>
+        ) : (
+          <span className={`text-sm font-bold ${low ? "text-rose-500" : "text-stone-800"}`}>{item.qty ?? 0}</span>
+        )}
+      </div>
+    );
+  };
+
+  return (
+    <div className="max-w-6xl">
+      <div className="flex items-center justify-between flex-wrap gap-3 mb-5">
+        <h1 className="font-display text-2xl font-light text-stone-800" dangerouslySetInnerHTML={{ __html: t("inventoryTitle") }} />
+        {isAdmin && (
+          <div className="flex items-center gap-2">
+            <button type="button" onClick={() => setShowAddForm((v) => !v)}
+              className="flex items-center gap-1.5 text-sm font-medium border border-stone-200 hover:border-rose-300 text-stone-600 hover:text-rose-500 px-3 py-2 rounded-lg transition">
+              <Plus size={15} /> {t("inventoryAddItem")}
+            </button>
+            <button type="button" onClick={() => setShowPasteModal(true)}
+              className="flex items-center gap-1.5 text-sm font-medium bg-rose-400 hover:bg-rose-500 text-white px-3 py-2 rounded-lg transition">
+              <Upload size={15} /> {t("inventoryPasteUpdate")}
+            </button>
+          </div>
+        )}
+      </div>
+
+      {!isAdmin && (
+        <div className="text-xs text-stone-400 bg-stone-50 border border-stone-200 rounded-lg px-3 py-2 mb-4">
+          {t("inventoryReadonlyNotice")}
+        </div>
+      )}
+
+      {/* stats */}
+      <div className="grid grid-cols-3 gap-3 mb-4">
+        <div className="bg-white border border-stone-200 rounded-xl px-4 py-3 shadow-sm">
+          <div className="text-[11px] text-stone-400 font-medium">{t("inventoryTotalItems")}</div>
+          <div className="text-xl font-semibold text-stone-800">{inventory.length}</div>
+        </div>
+        <div className="bg-white border border-stone-200 rounded-xl px-4 py-3 shadow-sm">
+          <div className="text-[11px] text-stone-400 font-medium">{t("inventoryTotalQty")}</div>
+          <div className="text-xl font-semibold text-stone-800">{totalQty}</div>
+        </div>
+        <div className={`rounded-xl px-4 py-3 shadow-sm border ${lowCount > 0 ? "bg-rose-50 border-rose-200" : "bg-white border-stone-200"}`}>
+          <div className="text-[11px] text-stone-400 font-medium">{t("inventoryLowStock")}</div>
+          <div className={`text-xl font-semibold ${lowCount > 0 ? "text-rose-500" : "text-stone-800"}`}>{lowCount}</div>
+        </div>
+      </div>
+
+      {showAddForm && isAdmin && (
+        <div className="flex flex-wrap items-end gap-2 bg-stone-50 border border-stone-200 rounded-xl p-3 mb-4">
+          <GField label={t("inventoryBrand")}>
+            <input value={newBrand} onChange={(e) => setNewBrand(e.target.value)} className="ginput" placeholder="e.g. OPI" />
+          </GField>
+          <GField label={t("inventoryItemNo")}>
+            <input value={newItemNo} onChange={(e) => setNewItemNo(e.target.value)} className="ginput" placeholder="A001" />
+          </GField>
+          <GField label={t("inventoryQty")}>
+            <input type="number" value={newQty} onChange={(e) => setNewQty(e.target.value)} className="ginput" placeholder="0" />
+          </GField>
+          <button type="button" onClick={handleAddSubmit} className="text-sm font-medium bg-rose-400 hover:bg-rose-500 text-white px-4 py-2.5 rounded-lg transition">{t("save")}</button>
+          <button type="button" onClick={() => setShowAddForm(false)} className="text-sm font-medium text-stone-500 border border-stone-200 px-4 py-2.5 rounded-lg transition">{t("cancel")}</button>
+          <style>{`.ginput { padding:9px 12px; border:1px solid #E7E5E4; border-radius:8px; font-size:13px; background:#FAFAF9; outline:none; transition:border-color .15s; } .ginput:focus { border-color:#FB7185; background:white; }`}</style>
+        </div>
+      )}
+
+      {/* search + brand filter + sort + threshold */}
+      <div className="flex flex-wrap items-center gap-3 mb-4">
+        <div className="relative flex-1 min-w-[180px]">
+          <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" />
+          <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t("inventorySearch")}
+            className="w-full pl-9 pr-3 py-2 border border-stone-200 rounded-lg text-sm bg-white outline-none focus:border-rose-300" />
+        </div>
+        <select value={brandFilter} onChange={(e) => setBrandFilter(e.target.value)}
+          className="text-xs font-medium px-3 py-2 rounded-lg border border-stone-200 bg-white text-stone-600 outline-none focus:border-rose-300">
+          <option value="">{t("inventoryAllBrands")}</option>
+          {brandList.map((b) => <option key={b} value={b}>{b}</option>)}
+        </select>
+        <button type="button" onClick={() => setGroupByBrand((v) => !v)}
+          className={`text-xs font-medium px-3 py-2 rounded-lg border transition ${groupByBrand ? "bg-rose-400 text-white border-rose-400" : "border-stone-200 text-stone-500 hover:border-rose-300"}`}>
+          {t("inventoryGroupByBrand")}
+        </button>
+        <button type="button" onClick={() => setSortLowFirst((v) => !v)}
+          className={`text-xs font-medium px-3 py-2 rounded-lg border transition ${sortLowFirst ? "bg-rose-400 text-white border-rose-400" : "border-stone-200 text-stone-500 hover:border-rose-300"}`}>
+          {t("inventorySortLow")}
+        </button>
+        {isAdmin && (
+          <div className="flex items-center gap-1.5 text-xs text-stone-500">
+            <span>{t("inventoryLowStockThreshold")}</span>
+            <input
+              type="number"
+              value={thresholdDraft}
+              onChange={(e) => setThresholdDraft(e.target.value)}
+              onBlur={() => onSaveThreshold(thresholdDraft)}
+              className="w-16 px-2 py-1.5 border border-stone-200 rounded-lg text-xs bg-white outline-none focus:border-rose-300"
+            />
+          </div>
+        )}
+      </div>
+
+      {/* grid — dense so 150+ items stay scannable, grouped by brand */}
+      {filtered.length === 0 ? (
+        <div className="text-sm text-stone-400 py-10 text-center">{t("inventoryEmpty")}</div>
+      ) : (
+        <div className="space-y-5">
+          {grouped.map((group) => (
+            <div key={group.brand || "__all__"}>
+              {group.brand && (
+                <div className="text-[11px] font-bold tracking-widest uppercase text-stone-400 px-1 pb-1.5 border-b border-stone-100 mb-2">
+                  {group.brand} <span className="font-medium normal-case text-stone-300">· {group.items.length}</span>
+                </div>
+              )}
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 lg:grid-cols-5 gap-2">
+                {group.items.map(renderCard)}
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {isAdmin && (
+        <InventoryUsageReport t={t} lang={lang} />
+      )}
+
+      {showPasteModal && isAdmin && (
+        <InventoryPasteModal t={t} lang={lang} onClose={() => setShowPasteModal(false)} onConfirm={onBulkUpsert} />
+      )}
+    </div>
+  );
+}
+
+/* ────────────────────────────────────────────────────
+   INVENTORY PASTE-UPDATE MODAL
+   Accepts a raw Excel copy-paste. Two formats are both
+   auto-detected line-by-line:
+     "Item No.<TAB>Q'ty"                 → 2 columns
+     "Brand<TAB>Item No.<TAB>Q'ty"       → 3 columns
+   A stray header row (text in the Q'ty column) is
+   automatically skipped since it won't parse as a number.
+──────────────────────────────────────────────────── */
+
+function InventoryPasteModal({ t, lang, onClose, onConfirm }) {
+  const [text, setText] = useState("");
+  const [submitting, setSubmitting] = useState(false);
+
+  const parsed = useMemo(() => {
+    const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    const rows = [];
+    let invalid = 0;
+    lines.forEach((line) => {
+      let parts = line.split("\t");
+      if (parts.length < 2) parts = line.split(/,|\s{2,}/);
+      if (parts.length < 2) parts = line.split(/\s+/);
+      if (parts.length < 2) { invalid++; return; }
+
+      const qtyRaw = parts[parts.length - 1].trim().replace(/,/g, "");
+      const qty = Number(qtyRaw);
+
+      if (parts.length >= 3) {
+        // Brand / Item No. / Q'ty
+        const brand = parts[0].trim();
+        const itemNo = parts.slice(1, -1).join(" ").trim();
+        if (!itemNo || Number.isNaN(qty)) { invalid++; return; }
+        rows.push({ brand, itemNo, qty });
+      } else {
+        // Item No. / Q'ty
+        const itemNo = parts[0].trim();
+        if (!itemNo || Number.isNaN(qty)) { invalid++; return; }
+        rows.push({ itemNo, qty });
+      }
+    });
+    return { rows, invalid };
+  }, [text]);
+
+  const handleConfirm = async () => {
+    if (!parsed.rows.length) return;
+    setSubmitting(true);
+    await onConfirm(parsed.rows);
+    setSubmitting(false);
+    onClose();
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-6 py-4 border-b border-stone-100">
+          <h2 className="font-display text-xl font-light text-stone-800">{t("inventoryPasteTitle")}</h2>
+          <button type="button" onClick={onClose} className="text-stone-400 hover:text-rose-400 transition"><X size={20} /></button>
+        </div>
+        <div className="px-6 py-4">
+          <p className="text-xs text-stone-400 mb-3 leading-relaxed">{t("inventoryPasteDesc")}</p>
+          <textarea
+            value={text}
+            onChange={(e) => setText(e.target.value)}
+            placeholder={"A001\t25\nA002\t10\nA003\t8\n\n" + (lang === "zh" ? "（也可貼 3 欄：品牌／編號／數量）\nOPI\tB010\t14" : "(3 columns also works: Brand / Item No. / Qty)\nOPI\tB010\t14")}
+            rows={10}
+            className="w-full px-3 py-2.5 border border-stone-200 rounded-lg text-xs font-mono bg-stone-50 outline-none focus:border-rose-300 resize-none"
+          />
+          {text.trim() && (
+            <div className="flex items-center gap-4 text-xs mt-2.5 text-stone-500">
+              <span>{t("inventoryPasteMatched")}: <b className="text-stone-700">{parsed.rows.length}</b></span>
+              {parsed.invalid > 0 && <span className="text-amber-500">{t("inventoryPasteInvalid")}: {parsed.invalid}</span>}
+            </div>
+          )}
+        </div>
+        <div className="flex items-center gap-2 px-6 py-4 border-t border-stone-100">
+          <button type="button" onClick={onClose} className="text-sm font-medium text-stone-500 border border-stone-200 hover:border-stone-300 px-4 py-2 rounded-lg transition ml-auto">
+            {t("cancel")}
+          </button>
+          <button
+            type="button" onClick={handleConfirm} disabled={!parsed.rows.length || submitting}
+            className="text-sm font-medium bg-rose-400 hover:bg-rose-500 disabled:opacity-50 text-white px-4 py-2 rounded-lg transition"
+          >
+            {submitting ? t("guestSubmitting") : `${t("inventoryPasteConfirm")} (${parsed.rows.length})`}
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+/* ────────────────────────────────────────────────────
+   INVENTORY USAGE REPORT (admin only)
+   Simple date-range analytics on top of the append-only
+   "inventoryMovements" log (see AppInner for how entries
+   get written on every qty change). This is intentionally
+   a lightweight read-only query tool — good enough for
+   "how much did we use of X between date A and B" without
+   needing a dedicated analytics backend.
+──────────────────────────────────────────────────── */
+
+function InventoryUsageReport({ t, lang }) {
+  const [open, setOpen] = useState(false);
+  const [start, setStart] = useState(dateStr(-6));
+  const [end, setEnd] = useState(todayStr());
+  const [loading, setLoading] = useState(false);
+  const [rows, setRows] = useState(null); // null = not run yet
+
+  const quickRange = (kind) => {
+    const now = new Date();
+    if (kind === "today") { setStart(todayStr()); setEnd(todayStr()); }
+    else if (kind === "7d") { setStart(dateStr(-6)); setEnd(todayStr()); }
+    else if (kind === "30d") { setStart(dateStr(-29)); setEnd(todayStr()); }
+    else if (kind === "month") {
+      const first = new Date(now.getFullYear(), now.getMonth(), 1);
+      setStart(localDateKey(first)); setEnd(todayStr());
+    }
+  };
+
+  const runReport = async () => {
+    setLoading(true);
+    try {
+      const q = query(
+        collection(db, "inventoryMovements"),
+        where("dateKey", ">=", start),
+        where("dateKey", "<=", end)
+      );
+      const snap = await getDocs(q);
+      const byItem = new Map();
+      snap.docs.forEach((d) => {
+        const m = d.data();
+        const key = m.itemId || m.itemNo;
+        if (!byItem.has(key)) {
+          byItem.set(key, { itemNo: m.itemNo, brand: m.brand || "", used: 0, restocked: 0, net: 0 });
+        }
+        const agg = byItem.get(key);
+        const delta = Number(m.delta) || 0;
+        if (delta < 0) agg.used += -delta; else agg.restocked += delta;
+        agg.net += delta;
+      });
+      const list = [...byItem.values()].sort((a, b) => b.used - a.used);
+      setRows(list);
+    } catch (err) {
+      console.error("inventory usage report error:", err);
+      setRows([]);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  return (
+    <div className="mt-8 bg-white border border-stone-200 rounded-xl shadow-sm">
+      <button type="button" onClick={() => setOpen((v) => !v)}
+        className="w-full flex items-center justify-between px-5 py-4 text-left">
+        <span className="font-display text-lg font-light text-stone-800">{t("inventoryUsageReport")}</span>
+        {open ? <ChevronUp size={18} className="text-stone-400" /> : <ChevronDown size={18} className="text-stone-400" />}
+      </button>
+      {open && (
+        <div className="px-5 pb-5 border-t border-stone-100 pt-4">
+          <p className="text-xs text-stone-400 mb-3 leading-relaxed">{t("inventoryUsageDesc")}</p>
+          <div className="flex flex-wrap items-end gap-2 mb-3">
+            <GField label={t("inventoryStartDate")}>
+              <input type="date" value={start} onChange={(e) => setStart(e.target.value)} className="ginput" />
+            </GField>
+            <GField label={t("inventoryEndDate")}>
+              <input type="date" value={end} onChange={(e) => setEnd(e.target.value)} className="ginput" />
+            </GField>
+            <button type="button" onClick={runReport} disabled={loading}
+              className="text-sm font-medium bg-rose-400 hover:bg-rose-500 disabled:opacity-60 text-white px-4 py-2.5 rounded-lg transition">
+              {loading ? t("inventoryLoadingReport") : t("inventoryRunReport")}
+            </button>
+            <style>{`.ginput { padding:9px 12px; border:1px solid #E7E5E4; border-radius:8px; font-size:13px; background:#FAFAF9; outline:none; transition:border-color .15s; } .ginput:focus { border-color:#FB7185; background:white; }`}</style>
+          </div>
+          <div className="flex flex-wrap gap-1.5 mb-4">
+            {[["today", t("inventoryQuickToday")], ["7d", t("inventoryQuick7")], ["month", t("inventoryQuickMonth")], ["30d", t("inventoryQuick30")]].map(([k, label]) => (
+              <button key={k} type="button" onClick={() => quickRange(k)}
+                className="text-[11px] font-medium px-2.5 py-1 rounded-full border border-stone-200 text-stone-500 hover:border-rose-300 hover:text-rose-500 transition">
+                {label}
+              </button>
+            ))}
+          </div>
+
+          {rows === null ? null : rows.length === 0 ? (
+            <div className="text-sm text-stone-400 py-6 text-center">{t("inventoryReportEmpty")}</div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-sm">
+                <thead>
+                  <tr className="text-left text-[11px] text-stone-400 uppercase tracking-wide border-b border-stone-100">
+                    <th className="py-2 pr-3 font-medium">{t("inventoryBrand")}</th>
+                    <th className="py-2 pr-3 font-medium">{t("inventoryItemNo")}</th>
+                    <th className="py-2 pr-3 font-medium text-right">{t("inventoryUsed")}</th>
+                    <th className="py-2 pr-3 font-medium text-right">{t("inventoryRestocked")}</th>
+                    <th className="py-2 pr-3 font-medium text-right">{t("inventoryNetChange")}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {rows.map((r) => (
+                    <tr key={`${r.brand}-${r.itemNo}`} className="border-b border-stone-50">
+                      <td className="py-2 pr-3 text-stone-500 text-xs">{r.brand || t("inventoryNoBrand")}</td>
+                      <td className="py-2 pr-3 font-medium text-stone-800">{r.itemNo}</td>
+                      <td className="py-2 pr-3 text-right text-rose-500 font-semibold">{r.used || "—"}</td>
+                      <td className="py-2 pr-3 text-right text-green-600 font-semibold">{r.restocked || "—"}</td>
+                      <td className={`py-2 pr-3 text-right font-semibold ${r.net < 0 ? "text-rose-500" : r.net > 0 ? "text-green-600" : "text-stone-400"}`}>
+                        {r.net > 0 ? `+${r.net}` : r.net}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+    </div>
+  );
+}
+
 
 /* ════════════════════════════════════════════════════
    ADMIN INTRO EDITOR (lives inside CalendarPage header as a small button)
