@@ -5,12 +5,12 @@ import {
   Pencil, ChevronLeft, ChevronRight, Image as ImageIcon, Clock,
   Eye, EyeOff, Lock, User, Users, Menu, Phone, Database, Send, RefreshCw, ClipboardCopy, FileText,
   ShoppingCart, Receipt, DollarSign, TrendingUp, Settings, ChevronDown, ChevronUp, BarChart2,
-  Package, Search, Upload
+  Package, Search, Upload, CheckSquare, Square, CheckCircle2, ClipboardList, ArrowLeft
 } from "lucide-react";
 
 import { initializeApp } from "firebase/app";
 import {
-  getFirestore, collection, addDoc, getDocs, getDoc, query, orderBy, where, serverTimestamp,
+  getFirestore, collection, addDoc, getDocs, getDoc, query, orderBy, limit, where, serverTimestamp,
   doc, setDoc, updateDoc, deleteDoc, onSnapshot, writeBatch,
 } from "firebase/firestore";
 
@@ -469,27 +469,45 @@ const T = {
   inventoryPasteConfirm: { zh: "確認更新", en: "Confirm Update" },
   inventoryBrand: { zh: "品牌", en: "Brand" },
   inventoryAllBrands: { zh: "全部品牌", en: "All Brands" },
-  inventoryNoBrand: { zh: "未分類", en: "Unbranded" },
-  inventoryGroupByBrand: { zh: "依品牌分組", en: "Group by Brand" },
-  inventorySelectAll: { zh: "全選", en: "Select All" },
+  inventoryNoBrand: { zh: "未分類品牌", en: "No Brand" },
+  inventoryGroupEnabled: { zh: "分組顯示", en: "Group View" },
+  inventorySelectAll: { zh: "全選目前結果", en: "Select All Filtered" },
   inventoryApplyBrand: { zh: "套用品牌", en: "Apply Brand" },
   inventoryClearSelection: { zh: "清除選取", en: "Clear Selection" },
 
-  /* Inventory usage report (date-range analytics) */
-  inventoryUsageReport: { zh: "用量統計", en: "Usage Report" },
-  inventoryUsageDesc: { zh: "依日期區間查詢各品項的用量與補貨紀錄，資料會在每次貼上更新或手動調整數量時自動記錄。", en: "Query usage and restock activity per item within a date range. Records are captured automatically on every paste-update or manual quantity change." },
-  inventoryStartDate: { zh: "起始日期", en: "Start Date" },
-  inventoryEndDate: { zh: "結束日期", en: "End Date" },
-  inventoryQuickToday: { zh: "今天", en: "Today" },
-  inventoryQuick7: { zh: "近7天", en: "Last 7 Days" },
-  inventoryQuickMonth: { zh: "本月", en: "This Month" },
-  inventoryQuick30: { zh: "近30天", en: "Last 30 Days" },
-  inventoryRunReport: { zh: "查詢", en: "Run Report" },
-  inventoryLoadingReport: { zh: "查詢中...", en: "Running..." },
-  inventoryReportEmpty: { zh: "此區間尚無異動紀錄", en: "No activity recorded in this range" },
-  inventoryUsed: { zh: "用量", en: "Used" },
-  inventoryRestocked: { zh: "補貨", en: "Restocked" },
-  inventoryNetChange: { zh: "淨變化", en: "Net Change" },
+  /* Category (種類 > 品牌 > 藥劑 hierarchy) */
+  inventoryCategory: { zh: "藥劑種類", en: "Category" },
+  inventoryAllCategories: { zh: "全部種類", en: "All Categories" },
+  inventoryNoCategory: { zh: "未分類", en: "Uncategorized" },
+  inventoryApplyCategory: { zh: "套用種類", en: "Apply Category" },
+
+  /* Selection mode */
+  inventorySelectMode: { zh: "選取模式", en: "Select Mode" },
+  inventorySelectModeHint: { zh: "點卡片即可選取；按住 Shift 點擊可整段連續選取；點群組標題的勾選框可整組全選（含「未分類」）。", en: "Click a card to select. Shift-click to select a range. Check a group header to select that whole group (including \"Uncategorized\")." },
+  inventorySelectedCount: { zh: "已選取", en: "selected" },
+  inventoryDeleteSelected: { zh: "刪除已選取", en: "Delete Selected" },
+  inventoryConfirmBulkDelete: { zh: "確定要刪除已選取的所有品項嗎？此動作無法復原。", en: "Delete all selected items? This cannot be undone." },
+
+  /* Usage entry workflow (replaces the old date-range report) */
+  inventoryRecordUsage: { zh: "記錄用量", en: "Record Usage" },
+  inventoryUsageEntryTitle: { zh: "記錄用量消耗", en: "Record Usage" },
+  inventoryUsageDate: { zh: "消耗日期", en: "Usage Date" },
+  inventoryUsageQtyLabel: { zh: "本次用量", en: "Qty Used" },
+  inventoryUsagePreview: { zh: "預覽變更", en: "Preview Changes" },
+  inventoryUsageBack: { zh: "返回修改", en: "Back to Edit" },
+  inventoryUsageConfirm: { zh: "確認送出", en: "Confirm & Save" },
+  inventoryUsageBefore: { zh: "目前庫存", en: "Current" },
+  inventoryUsageAfter: { zh: "異動後", en: "After" },
+  inventoryUsageNoQty: { zh: "請至少為一項輸入用量", en: "Enter a quantity for at least one item" },
+  inventoryUsageStep: { zh: "共選取", en: "Selected" },
+  inventoryRecentActivity: { zh: "最近異動記錄", en: "Recent Activity" },
+  inventoryActivityEmpty: { zh: "尚無異動記錄", en: "No activity yet" },
+  inventoryTypeNewItem: { zh: "新增", en: "New" },
+  inventoryTypeManualEdit: { zh: "手動調整", en: "Manual" },
+  inventoryTypeBump: { zh: "快速調整", en: "Adjust" },
+  inventoryTypeBulkPaste: { zh: "批次貼上", en: "Bulk Paste" },
+  inventoryTypeUsageEntry: { zh: "用量記錄", en: "Usage" },
+  inventoryLoadingReport: { zh: "儲存中...", en: "Saving..." },
 };
 
 /* ════════════════════════════════════════════════════
@@ -1067,28 +1085,29 @@ function AppInner() {
   };
 
   /* ───── INVENTORY HANDLERS ─────
-     Architecture note for future usage-analytics:
+     Architecture note:
      - "inventory" holds only the CURRENT snapshot per item (fast to read/render
-       for 150–180 cards at once).
-     - Every quantity change (manual edit, +/- bump, or bulk Excel paste) also
-       appends an immutable record to "inventoryMovements" with qtyBefore/
-       qtyAfter/delta + a plain-string dateKey ("YYYY-MM-DD") and monthKey
-       ("YYYY-MM"). That log is what later date-range usage reports query —
-       we never need to rewrite history, only read a range of dateKey values.
+       for 150–180 cards at once). Each doc has itemNo / brand / category / qty.
+     - Every quantity change (manual edit, +/- bump, bulk Excel paste, or a
+       recorded usage entry) also appends an immutable record to
+       "inventoryMovements" with qtyBefore/qtyAfter/delta + a plain-string
+       dateKey ("YYYY-MM-DD") and monthKey ("YYYY-MM"). For usage entries the
+       dateKey is whatever consumption date the admin typed in — NOT
+       necessarily today — so historical entry is supported.
   ────────────────────────────────────────────────────── */
   // Firestore doc IDs can't contain "/", so sanitize while keeping the
   // original itemNo text for display.
   const inventoryDocId = (itemNo) => String(itemNo).trim().replace(/\//g, "-");
 
-  const logInventoryMovement = async ({ itemId, itemNo, brand, qtyBefore, qtyAfter, changeType }) => {
+  const logInventoryMovement = async ({ itemId, itemNo, brand, category, qtyBefore, qtyAfter, changeType, dateKey }) => {
     if (qtyBefore === qtyAfter && changeType !== "new_item") return; // no real change, skip noise
     try {
-      const today = todayStr();
+      const day = dateKey || todayStr();
       await addDoc(collection(db, "inventoryMovements"), {
-        itemId, itemNo, brand: brand || "",
+        itemId, itemNo, brand: brand || "", category: category || "",
         qtyBefore, qtyAfter, delta: qtyAfter - qtyBefore,
-        changeType, // "new_item" | "manual_edit" | "bump" | "bulk_paste"
-        dateKey: today, monthKey: today.slice(0, 7),
+        changeType, // "new_item" | "manual_edit" | "bump" | "bulk_paste" | "usage_entry"
+        dateKey: day, monthKey: day.slice(0, 7),
         recordedAt: serverTimestamp(),
       });
     } catch (err) {
@@ -1098,7 +1117,8 @@ function AppInner() {
     }
   };
 
-  const saveInventoryItem = async (itemNo, qty, brand, changeType = "manual_edit") => {
+  const saveInventoryItem = async (itemNo, qty, extra = {}) => {
+    const { brand, category, changeType = "manual_edit" } = extra;
     const trimmed = String(itemNo || "").trim();
     if (!trimmed) {
       showToast(t("inventoryItemNoRequired"), "warn");
@@ -1109,14 +1129,15 @@ function AppInner() {
     const qtyBefore = existing ? Number(existing.qty) || 0 : 0;
     const qtyAfter = Number(qty) || 0;
     const finalBrand = brand !== undefined ? brand : (existing?.brand || "");
+    const finalCategory = category !== undefined ? category : (existing?.category || "");
     try {
       await setDoc(
         doc(db, "inventory", id),
-        { itemNo: trimmed, brand: finalBrand, qty: qtyAfter, updatedAt: serverTimestamp() },
+        { itemNo: trimmed, brand: finalBrand, category: finalCategory, qty: qtyAfter, updatedAt: serverTimestamp() },
         { merge: true }
       );
       logInventoryMovement({
-        itemId: id, itemNo: trimmed, brand: finalBrand, qtyBefore, qtyAfter,
+        itemId: id, itemNo: trimmed, brand: finalBrand, category: finalCategory, qtyBefore, qtyAfter,
         changeType: existing ? changeType : "new_item",
       });
       showToast(t("inventorySaved"), "success");
@@ -1137,8 +1158,8 @@ function AppInner() {
     }
   };
 
-  // Bulk upsert from an Excel paste: rows = [{ itemNo, qty, brand? }, ...].
-  // Existing item numbers get their qty (and brand, if supplied) updated;
+  // Bulk upsert from an Excel paste: rows = [{ itemNo, qty, brand?, category? }, ...].
+  // Existing item numbers get their qty (and brand/category, if supplied) updated;
   // new ones are created. Every row also gets a movement log entry.
   // Firestore batches are capped at 500 ops and each row writes 2 ops
   // (inventory doc + movement doc), so we chunk conservatively.
@@ -1158,14 +1179,15 @@ function AppInner() {
           const qtyBefore = prev ? Number(prev.qty) || 0 : 0;
           const qtyAfter = Number(r.qty) || 0;
           const brand = r.brand !== undefined && r.brand !== "" ? r.brand : (prev?.brand || "");
+          const category = r.category !== undefined && r.category !== "" ? r.category : (prev?.category || "");
           if (prev) updated++; else added++;
           batch.set(
             doc(db, "inventory", id),
-            { itemNo, brand, qty: qtyAfter, updatedAt: serverTimestamp() },
+            { itemNo, brand, category, qty: qtyAfter, updatedAt: serverTimestamp() },
             { merge: true }
           );
           batch.set(doc(collection(db, "inventoryMovements")), {
-            itemId: id, itemNo, brand,
+            itemId: id, itemNo, brand, category,
             qtyBefore, qtyAfter, delta: qtyAfter - qtyBefore,
             changeType: prev ? "bulk_paste" : "new_item",
             dateKey: today, monthKey: today.slice(0, 7),
@@ -1195,9 +1217,9 @@ function AppInner() {
     }
   };
 
-  // Bulk brand edit — used when multiple cards are checkbox-selected and
-  // the admin applies one brand to all of them in one go. Only touches
-  // the "brand" field (qty is untouched, so no movement log entry).
+  // Bulk brand edit — used when multiple cards are selected and the admin
+  // applies one brand to all of them in one go. Only touches "brand"
+  // (qty is untouched, so no movement log entry).
   const bulkUpdateInventoryBrand = async (ids, brand) => {
     if (!ids || !ids.length) return;
     const trimmedBrand = (brand || "").trim();
@@ -1216,6 +1238,88 @@ function AppInner() {
       );
     } catch (err) {
       console.error("bulkUpdateInventoryBrand error:", err);
+      showToast(t("syncError"), "warn");
+    }
+  };
+
+  // Bulk category edit — same pattern as brand, but sets "category" so the
+  // 種類 (category) > 品牌 (brand) > 藥劑 (item) grouping hierarchy works.
+  const bulkUpdateInventoryCategory = async (ids, category) => {
+    if (!ids || !ids.length) return;
+    const trimmedCategory = (category || "").trim();
+    try {
+      for (let i = 0; i < ids.length; i += 400) {
+        const chunk = ids.slice(i, i + 400);
+        const batch = writeBatch(db);
+        chunk.forEach((id) => {
+          batch.set(doc(db, "inventory", id), { category: trimmedCategory, updatedAt: serverTimestamp() }, { merge: true });
+        });
+        await batch.commit();
+      }
+      showToast(
+        lang === "zh" ? `已將 ${ids.length} 項種類更新為「${trimmedCategory || t("inventoryNoCategory")}」` : `Set category to "${trimmedCategory || t("inventoryNoCategory")}" for ${ids.length} item(s)`,
+        "success"
+      );
+    } catch (err) {
+      console.error("bulkUpdateInventoryCategory error:", err);
+      showToast(t("syncError"), "warn");
+    }
+  };
+
+  // Bulk delete — used by the "刪除已選取" button once items are checked.
+  const bulkDeleteInventoryItems = async (ids) => {
+    if (!ids || !ids.length) return;
+    if (!window.confirm(t("inventoryConfirmBulkDelete"))) return;
+    try {
+      for (let i = 0; i < ids.length; i += 400) {
+        const chunk = ids.slice(i, i + 400);
+        const batch = writeBatch(db);
+        chunk.forEach((id) => batch.delete(doc(db, "inventory", id)));
+        await batch.commit();
+      }
+      showToast(
+        lang === "zh" ? `已刪除 ${ids.length} 項` : `Deleted ${ids.length} item(s)`,
+        "success"
+      );
+    } catch (err) {
+      console.error("bulkDeleteInventoryItems error:", err);
+      showToast(t("syncError"), "warn");
+    }
+  };
+
+  // Record a usage/consumption event for a specific date (may be a past
+  // date, not just "today"). entries = [{ id, itemNo, brand, category,
+  // qtyBefore, qtyAfter }]. Writes the new current qty AND a movement log
+  // entry stamped with the chosen dateKey, in one batch per chunk.
+  const recordInventoryUsage = async (dateKey, entries) => {
+    if (!entries || !entries.length) return;
+    const day = dateKey || todayStr();
+    try {
+      for (let i = 0; i < entries.length; i += 200) {
+        const chunk = entries.slice(i, i + 200);
+        const batch = writeBatch(db);
+        chunk.forEach((e) => {
+          batch.set(
+            doc(db, "inventory", e.id),
+            { qty: e.qtyAfter, updatedAt: serverTimestamp() },
+            { merge: true }
+          );
+          batch.set(doc(collection(db, "inventoryMovements")), {
+            itemId: e.id, itemNo: e.itemNo, brand: e.brand || "", category: e.category || "",
+            qtyBefore: e.qtyBefore, qtyAfter: e.qtyAfter, delta: e.qtyAfter - e.qtyBefore,
+            changeType: "usage_entry",
+            dateKey: day, monthKey: day.slice(0, 7),
+            recordedAt: serverTimestamp(),
+          });
+        });
+        await batch.commit();
+      }
+      showToast(
+        lang === "zh" ? `已記錄 ${entries.length} 項用量` : `Recorded usage for ${entries.length} item(s)`,
+        "success"
+      );
+    } catch (err) {
+      console.error("recordInventoryUsage error:", err);
       showToast(t("syncError"), "warn");
     }
   };
@@ -1498,6 +1602,9 @@ function AppInner() {
               onDeleteItem={deleteInventoryItem}
               onBulkUpsert={bulkUpsertInventory}
               onBulkSetBrand={bulkUpdateInventoryBrand}
+              onBulkSetCategory={bulkUpdateInventoryCategory}
+              onBulkDelete={bulkDeleteInventoryItems}
+              onRecordUsage={recordInventoryUsage}
               showToast={showToast}
             />
           )}
@@ -3009,30 +3116,35 @@ function AccountsPage({ t, lang, accounts, onSave, onDelete }) {
    INVENTORY PAGE
    Visible to both admin (editable) and staff (read-only).
    - Compact grid so 150–180 items are scannable at a glance
+   - Hierarchy: 藥劑種類 Category → 品牌 Brand → 藥劑 Item
    - Card order: Brand → Item No. → Qty
-   - Optional grouping / filtering by brand
-   - Search box to jump to a specific item no.
-   - Inline qty +/- and click-to-edit for admins
+   - "Select Mode" turns cards into checkable tiles:
+       · click a card = toggle it
+       · Shift+click = select a contiguous range
+       · every group header (category AND brand, including the
+         "Uncategorized" / "No Brand" ones) has its own checkbox
+         to select the whole group in one tap
+   - Selected items can be bulk brand-tagged, bulk category-tagged,
+     bulk deleted, or sent straight into "Record Usage"
    - "Paste Update" lets admins bulk-import/update straight from
-     an Excel copy: "Item No.<tab>Q'ty" (2 columns), or
-     "Brand<tab>Item No.<tab>Q'ty" (3 columns) when they also
-     want to set/refresh the brand at the same time
-   - "Usage Report" (admin only) queries the inventoryMovements
-     log by date range — see architecture note on saveInventoryItem
-     / bulkUpsertInventory / logInventoryMovement in AppInner
+     an Excel copy of 2–4 columns (see InventoryPasteModal)
 ════════════════════════════════════════════════════ */
 
 function InventoryPage({
   t, lang, isAdmin, inventory, lowStockThreshold,
-  onSaveThreshold, onSaveItem, onDeleteItem, onBulkUpsert, onBulkSetBrand, showToast,
+  onSaveThreshold, onSaveItem, onDeleteItem, onBulkUpsert,
+  onBulkSetBrand, onBulkSetCategory, onBulkDelete, onRecordUsage, showToast,
 }) {
   const [search, setSearch] = useState("");
   const [sortLowFirst, setSortLowFirst] = useState(false);
   const [brandFilter, setBrandFilter] = useState("");
-  const [groupByBrand, setGroupByBrand] = useState(true);
+  const [categoryFilter, setCategoryFilter] = useState("");
+  const [groupEnabled, setGroupEnabled] = useState(true);
   const [showPasteModal, setShowPasteModal] = useState(false);
   const [showAddForm, setShowAddForm] = useState(false);
+  const [showUsageModal, setShowUsageModal] = useState(false);
   const [newBrand, setNewBrand] = useState("");
+  const [newCategory, setNewCategory] = useState("");
   const [newItemNo, setNewItemNo] = useState("");
   const [newQty, setNewQty] = useState("");
   const [editingId, setEditingId] = useState(null);
@@ -3040,8 +3152,13 @@ function InventoryPage({
   const [editingBrandId, setEditingBrandId] = useState(null);
   const [editBrand, setEditBrand] = useState("");
   const [thresholdDraft, setThresholdDraft] = useState(lowStockThreshold ?? 10);
+
+  // Selection mode
+  const [selectMode, setSelectMode] = useState(false);
   const [selectedIds, setSelectedIds] = useState(() => new Set());
+  const [lastClickedId, setLastClickedId] = useState(null);
   const [bulkBrand, setBulkBrand] = useState("");
+  const [bulkCategory, setBulkCategory] = useState("");
 
   useEffect(() => { setThresholdDraft(lowStockThreshold ?? 10); }, [lowStockThreshold]);
 
@@ -3052,56 +3169,75 @@ function InventoryPage({
     return [...set].sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }));
   }, [inventory]);
 
+  const categoryList = useMemo(() => {
+    const set = new Set(inventory.map((i) => (i.category || "").trim()).filter(Boolean));
+    return [...set].sort((a, b) => a.localeCompare(b, undefined, { numeric: true, sensitivity: "base" }));
+  }, [inventory]);
+
   const filtered = useMemo(() => {
     let list = inventory;
     if (search.trim()) {
       const q = search.trim().toLowerCase();
-      list = list.filter((i) => (i.itemNo || "").toLowerCase().includes(q) || (i.brand || "").toLowerCase().includes(q));
+      list = list.filter((i) =>
+        (i.itemNo || "").toLowerCase().includes(q) ||
+        (i.brand || "").toLowerCase().includes(q) ||
+        (i.category || "").toLowerCase().includes(q)
+      );
     }
     if (brandFilter) list = list.filter((i) => (i.brand || "") === brandFilter);
+    if (categoryFilter) list = list.filter((i) => (i.category || "") === categoryFilter);
     return [...list].sort((a, b) => {
       if (sortLowFirst) return (Number(a.qty) || 0) - (Number(b.qty) || 0);
       return (a.itemNo || "").localeCompare(b.itemNo || "", undefined, { numeric: true, sensitivity: "base" });
     });
-  }, [inventory, search, brandFilter, sortLowFirst]);
+  }, [inventory, search, brandFilter, categoryFilter, sortLowFirst]);
 
-  // When grouping, cluster the already-sorted/filtered list under brand headers.
-  const grouped = useMemo(() => {
-    if (!groupByBrand) return [{ brand: null, items: filtered }];
-    const map = new Map();
+  // Nested Category → Brand → items tree for the grouped view.
+  const groupedTree = useMemo(() => {
+    if (!groupEnabled) return [{ category: null, brands: [{ brand: null, items: filtered }] }];
+    const catMap = new Map();
     filtered.forEach((item) => {
-      const key = (item.brand || "").trim() || t("inventoryNoBrand");
-      if (!map.has(key)) map.set(key, []);
-      map.get(key).push(item);
+      const cat = (item.category || "").trim() || t("inventoryNoCategory");
+      const brand = (item.brand || "").trim() || t("inventoryNoBrand");
+      if (!catMap.has(cat)) catMap.set(cat, new Map());
+      const brandMap = catMap.get(cat);
+      if (!brandMap.has(brand)) brandMap.set(brand, []);
+      brandMap.get(brand).push(item);
     });
-    return [...map.entries()]
+    return [...catMap.entries()]
       .sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true, sensitivity: "base" }))
-      .map(([brand, items]) => ({ brand, items }));
-  }, [filtered, groupByBrand, t]);
+      .map(([category, brandMap]) => ({
+        category,
+        brands: [...brandMap.entries()]
+          .sort((a, b) => a[0].localeCompare(b[0], undefined, { numeric: true, sensitivity: "base" }))
+          .map(([brand, items]) => ({ brand, items })),
+      }));
+  }, [filtered, groupEnabled, t]);
 
   const totalQty = useMemo(() => inventory.reduce((sum, i) => sum + (Number(i.qty) || 0), 0), [inventory]);
   const lowCount = useMemo(() => inventory.filter((i) => (Number(i.qty) || 0) <= threshold).length, [inventory, threshold]);
 
   const startEdit = (item) => { setEditingId(item.id); setEditQty(String(item.qty ?? "")); };
   const commitEdit = (item) => {
-    onSaveItem(item.itemNo, editQty === "" ? 0 : Number(editQty), item.brand);
+    onSaveItem(item.itemNo, editQty === "" ? 0 : Number(editQty), { brand: item.brand, category: item.category });
     setEditingId(null);
   };
   const bump = (item, delta) => {
     const next = Math.max(0, (Number(item.qty) || 0) + delta);
-    onSaveItem(item.itemNo, next, item.brand, "bump");
+    onSaveItem(item.itemNo, next, { brand: item.brand, category: item.category, changeType: "bump" });
   };
   const startEditBrand = (item) => { setEditingBrandId(item.id); setEditBrand(item.brand || ""); };
   const commitBrand = (item) => {
-    onSaveItem(item.itemNo, item.qty, editBrand.trim());
+    onSaveItem(item.itemNo, item.qty, { brand: editBrand.trim(), category: item.category });
     setEditingBrandId(null);
   };
   const handleAddSubmit = () => {
     if (!newItemNo.trim()) { showToast(t("inventoryItemNoRequired"), "warn"); return; }
-    onSaveItem(newItemNo, newQty === "" ? 0 : Number(newQty), newBrand.trim());
-    setNewBrand(""); setNewItemNo(""); setNewQty(""); setShowAddForm(false);
+    onSaveItem(newItemNo, newQty === "" ? 0 : Number(newQty), { brand: newBrand.trim(), category: newCategory.trim() });
+    setNewBrand(""); setNewCategory(""); setNewItemNo(""); setNewQty(""); setShowAddForm(false);
   };
 
+  /* ── Selection helpers ── */
   const toggleSelect = (id) => {
     setSelectedIds((prev) => {
       const next = new Set(prev);
@@ -3109,35 +3245,102 @@ function InventoryPage({
       return next;
     });
   };
+  const handleCardClick = (item) => (e) => {
+    if (!selectMode) return;
+    if (e.shiftKey && lastClickedId) {
+      const ids = filtered.map((i) => i.id);
+      const from = ids.indexOf(lastClickedId);
+      const to = ids.indexOf(item.id);
+      if (from !== -1 && to !== -1) {
+        const [s, en] = from < to ? [from, to] : [to, from];
+        const range = ids.slice(s, en + 1);
+        setSelectedIds((prev) => {
+          const next = new Set(prev);
+          range.forEach((id) => next.add(id));
+          return next;
+        });
+        setLastClickedId(item.id);
+        return;
+      }
+    }
+    toggleSelect(item.id);
+    setLastClickedId(item.id);
+  };
   const allFilteredSelected = filtered.length > 0 && filtered.every((i) => selectedIds.has(i.id));
-  const toggleSelectAll = () => {
+  const toggleSelectAllFiltered = () => {
     setSelectedIds(allFilteredSelected ? new Set() : new Set(filtered.map((i) => i.id)));
+  };
+  const groupSelectionState = (items) => {
+    const ids = items.map((i) => i.id);
+    const selectedCount = ids.filter((id) => selectedIds.has(id)).length;
+    return { all: selectedCount === ids.length, some: selectedCount > 0 && selectedCount < ids.length };
+  };
+  const toggleGroupSelect = (items) => {
+    const { all } = groupSelectionState(items);
+    setSelectedIds((prev) => {
+      const next = new Set(prev);
+      items.forEach((i) => { if (all) next.delete(i.id); else next.add(i.id); });
+      return next;
+    });
+  };
+  const toggleSelectMode = () => {
+    setSelectMode((v) => {
+      if (v) setSelectedIds(new Set()); // turning off — clear selection
+      return !v;
+    });
   };
   const applyBulkBrand = () => {
     if (!selectedIds.size) return;
     onBulkSetBrand([...selectedIds], bulkBrand.trim());
     setBulkBrand("");
+  };
+  const applyBulkCategory = () => {
+    if (!selectedIds.size) return;
+    onBulkSetCategory([...selectedIds], bulkCategory.trim());
+    setBulkCategory("");
+  };
+  const handleBulkDelete = () => {
+    if (!selectedIds.size) return;
+    onBulkDelete([...selectedIds]);
     setSelectedIds(new Set());
   };
+  const selectedItems = useMemo(
+    () => inventory.filter((i) => selectedIds.has(i.id)),
+    [inventory, selectedIds]
+  );
 
   const renderCard = (item) => {
     const low = (Number(item.qty) || 0) <= threshold;
+    const checked = selectedIds.has(item.id);
+
+    if (selectMode) {
+      return (
+        <div
+          key={item.id}
+          onClick={handleCardClick(item)}
+          className={`cursor-pointer select-none rounded-md border px-2.5 py-2 sm:px-1.5 sm:py-1 flex flex-col gap-1 sm:gap-0.5 transition ${
+            checked ? "bg-rose-200 border-rose-400 ring-2 ring-rose-300" : "bg-white border-stone-200 hover:border-rose-300"
+          }`}
+        >
+          <div className="flex items-center justify-between gap-1">
+            <span className={`text-[10px] sm:text-[9px] font-semibold uppercase tracking-wide truncate leading-tight ${item.brand ? "text-stone-500" : "text-stone-300 italic"}`}>
+              {item.brand || t("inventoryNoBrand")}
+            </span>
+            {checked ? <CheckCircle2 size={13} className="text-rose-500 flex-shrink-0" /> : <Square size={13} className="text-stone-200 flex-shrink-0" />}
+          </div>
+          <span className="text-xs sm:text-[10px] font-semibold text-stone-700 truncate leading-tight">{item.itemNo}</span>
+          <span className={`text-sm sm:text-xs font-bold ${low ? "text-rose-500" : "text-stone-800"}`}>{item.qty ?? 0}</span>
+        </div>
+      );
+    }
+
     const editing = editingId === item.id;
     const editingBrand = editingBrandId === item.id;
-    const checked = selectedIds.has(item.id);
     return (
       <div key={item.id}
-        className={`rounded-md border px-2.5 py-2 sm:px-1.5 sm:py-1 flex flex-col gap-1.5 sm:gap-0.5 ${checked ? "bg-rose-100 border-rose-300" : low ? "bg-rose-50 border-rose-200" : "bg-white border-stone-200"}`}>
-        {/* Checkbox + Brand — shown first per card layout order */}
+        className={`rounded-md border px-2.5 py-2 sm:px-1.5 sm:py-1 flex flex-col gap-1.5 sm:gap-0.5 ${low ? "bg-rose-50 border-rose-200" : "bg-white border-stone-200"}`}>
+        {/* Brand — shown first per card layout order */}
         <div className="flex items-center gap-1.5 sm:gap-1">
-          {isAdmin && (
-            <label className="flex items-center justify-center w-6 h-6 -m-1 sm:w-auto sm:h-auto sm:m-0 flex-shrink-0 cursor-pointer">
-              <input
-                type="checkbox" checked={checked} onChange={() => toggleSelect(item.id)}
-                className="w-4 h-4 sm:w-2.5 sm:h-2.5 accent-rose-400"
-              />
-            </label>
-          )}
           {editingBrand ? (
             <input
               autoFocus value={editBrand} onChange={(e) => setEditBrand(e.target.value)}
@@ -3201,14 +3404,18 @@ function InventoryPage({
       <div className="flex items-center justify-between flex-wrap gap-3 mb-5">
         <h1 className="font-display text-2xl font-light text-stone-800" dangerouslySetInnerHTML={{ __html: t("inventoryTitle") }} />
         {isAdmin && (
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 flex-wrap">
             <button type="button" onClick={() => setShowAddForm((v) => !v)}
               className="flex items-center gap-1.5 text-sm font-medium border border-stone-200 hover:border-rose-300 text-stone-600 hover:text-rose-500 px-3 py-2 rounded-lg transition">
               <Plus size={15} /> {t("inventoryAddItem")}
             </button>
             <button type="button" onClick={() => setShowPasteModal(true)}
-              className="flex items-center gap-1.5 text-sm font-medium bg-rose-400 hover:bg-rose-500 text-white px-3 py-2 rounded-lg transition">
+              className="flex items-center gap-1.5 text-sm font-medium bg-white border border-stone-200 hover:border-rose-300 text-stone-600 hover:text-rose-500 px-3 py-2 rounded-lg transition">
               <Upload size={15} /> {t("inventoryPasteUpdate")}
+            </button>
+            <button type="button" onClick={toggleSelectMode}
+              className={`flex items-center gap-1.5 text-sm font-medium px-3 py-2 rounded-lg transition ${selectMode ? "bg-rose-400 hover:bg-rose-500 text-white" : "border border-stone-200 hover:border-rose-300 text-stone-600 hover:text-rose-500"}`}>
+              <CheckSquare size={15} /> {t("inventorySelectMode")}
             </button>
           </div>
         )}
@@ -3217,6 +3424,11 @@ function InventoryPage({
       {!isAdmin && (
         <div className="text-xs text-stone-400 bg-stone-50 border border-stone-200 rounded-lg px-3 py-2 mb-4">
           {t("inventoryReadonlyNotice")}
+        </div>
+      )}
+      {isAdmin && selectMode && (
+        <div className="text-xs text-rose-500 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 mb-4">
+          {t("inventorySelectModeHint")}
         </div>
       )}
 
@@ -3238,6 +3450,9 @@ function InventoryPage({
 
       {showAddForm && isAdmin && (
         <div className="flex flex-wrap items-end gap-2 bg-stone-50 border border-stone-200 rounded-xl p-3 mb-4">
+          <GField label={t("inventoryCategory")}>
+            <input value={newCategory} onChange={(e) => setNewCategory(e.target.value)} className="ginput" placeholder={lang === "zh" ? "例：指甲油" : "e.g. Nail Polish"} />
+          </GField>
           <GField label={t("inventoryBrand")}>
             <input value={newBrand} onChange={(e) => setNewBrand(e.target.value)} className="ginput" placeholder="e.g. OPI" />
           </GField>
@@ -3253,21 +3468,26 @@ function InventoryPage({
         </div>
       )}
 
-      {/* search + brand filter + sort + threshold */}
-      <div className="flex flex-wrap items-center gap-3 mb-4">
+      {/* search + category/brand filter + sort + threshold */}
+      <div className="flex flex-wrap items-center gap-3 mb-3">
         <div className="relative flex-1 min-w-[180px]">
           <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-stone-400" />
           <input value={search} onChange={(e) => setSearch(e.target.value)} placeholder={t("inventorySearch")}
             className="w-full pl-9 pr-3 py-2 border border-stone-200 rounded-lg text-sm bg-white outline-none focus:border-rose-300" />
         </div>
+        <select value={categoryFilter} onChange={(e) => setCategoryFilter(e.target.value)}
+          className="text-xs font-medium px-3 py-2 rounded-lg border border-stone-200 bg-white text-stone-600 outline-none focus:border-rose-300">
+          <option value="">{t("inventoryAllCategories")}</option>
+          {categoryList.map((c) => <option key={c} value={c}>{c}</option>)}
+        </select>
         <select value={brandFilter} onChange={(e) => setBrandFilter(e.target.value)}
           className="text-xs font-medium px-3 py-2 rounded-lg border border-stone-200 bg-white text-stone-600 outline-none focus:border-rose-300">
           <option value="">{t("inventoryAllBrands")}</option>
           {brandList.map((b) => <option key={b} value={b}>{b}</option>)}
         </select>
-        <button type="button" onClick={() => setGroupByBrand((v) => !v)}
-          className={`text-xs font-medium px-3 py-2 rounded-lg border transition ${groupByBrand ? "bg-rose-400 text-white border-rose-400" : "border-stone-200 text-stone-500 hover:border-rose-300"}`}>
-          {t("inventoryGroupByBrand")}
+        <button type="button" onClick={() => setGroupEnabled((v) => !v)}
+          className={`text-xs font-medium px-3 py-2 rounded-lg border transition ${groupEnabled ? "bg-rose-400 text-white border-rose-400" : "border-stone-200 text-stone-500 hover:border-rose-300"}`}>
+          {t("inventoryGroupEnabled")}
         </button>
         <button type="button" onClick={() => setSortLowFirst((v) => !v)}
           className={`text-xs font-medium px-3 py-2 rounded-lg border transition ${sortLowFirst ? "bg-rose-400 text-white border-rose-400" : "border-stone-200 text-stone-500 hover:border-rose-300"}`}>
@@ -3285,62 +3505,125 @@ function InventoryPage({
             />
           </div>
         )}
-        {isAdmin && filtered.length > 0 && (
+        {isAdmin && selectMode && filtered.length > 0 && (
           <label className="flex items-center gap-1.5 text-xs text-stone-500 cursor-pointer select-none">
-            <input type="checkbox" checked={allFilteredSelected} onChange={toggleSelectAll} className="w-3.5 h-3.5 accent-rose-400" />
+            <input type="checkbox" checked={allFilteredSelected} onChange={toggleSelectAllFiltered} className="w-3.5 h-3.5 accent-rose-400" />
             {t("inventorySelectAll")}
           </label>
         )}
       </div>
 
-      {/* bulk brand-edit toolbar — appears once at least one card is checked */}
-      {isAdmin && selectedIds.size > 0 && (
-        <div className="flex flex-wrap items-center gap-2 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 mb-4">
+      {/* bulk action toolbar — appears once at least one card is checked in select mode */}
+      {isAdmin && selectMode && selectedIds.size > 0 && (
+        <div className="flex flex-wrap items-center gap-2 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2.5 mb-4">
           <span className="text-xs font-semibold text-rose-600 flex-shrink-0">
-            {lang === "zh" ? `已選取 ${selectedIds.size} 項` : `${selectedIds.size} selected`}
+            {t("inventorySelectedCount")} {selectedIds.size}
           </span>
           <input
             value={bulkBrand} onChange={(e) => setBulkBrand(e.target.value)}
             placeholder={t("inventoryBrand")}
-            className="px-2.5 py-1.5 border border-stone-200 rounded-lg text-xs bg-white outline-none focus:border-rose-300 w-40"
+            className="px-2.5 py-1.5 border border-stone-200 rounded-lg text-xs bg-white outline-none focus:border-rose-300 w-32"
           />
           <button type="button" onClick={applyBulkBrand}
-            className="text-xs font-semibold bg-rose-400 hover:bg-rose-500 text-white px-3 py-1.5 rounded-lg transition">
+            className="text-xs font-semibold bg-white border border-rose-300 hover:bg-rose-100 text-rose-500 px-3 py-1.5 rounded-lg transition">
             {t("inventoryApplyBrand")}
           </button>
+          <input
+            value={bulkCategory} onChange={(e) => setBulkCategory(e.target.value)}
+            placeholder={t("inventoryCategory")}
+            className="px-2.5 py-1.5 border border-stone-200 rounded-lg text-xs bg-white outline-none focus:border-rose-300 w-32"
+          />
+          <button type="button" onClick={applyBulkCategory}
+            className="text-xs font-semibold bg-white border border-rose-300 hover:bg-rose-100 text-rose-500 px-3 py-1.5 rounded-lg transition">
+            {t("inventoryApplyCategory")}
+          </button>
+          <button type="button" onClick={() => setShowUsageModal(true)}
+            className="flex items-center gap-1 text-xs font-semibold bg-stone-800 hover:bg-stone-900 text-white px-3 py-1.5 rounded-lg transition">
+            <ClipboardList size={13} /> {t("inventoryRecordUsage")}
+          </button>
+          <button type="button" onClick={handleBulkDelete}
+            className="flex items-center gap-1 text-xs font-semibold bg-white border border-red-300 hover:bg-red-50 text-red-500 px-3 py-1.5 rounded-lg transition">
+            <Trash2 size={13} /> {t("inventoryDeleteSelected")}
+          </button>
           <button type="button" onClick={() => setSelectedIds(new Set())}
-            className="text-xs font-medium text-stone-500 border border-stone-200 hover:border-stone-300 px-3 py-1.5 rounded-lg transition">
+            className="text-xs font-medium text-stone-500 border border-stone-200 hover:border-stone-300 px-3 py-1.5 rounded-lg transition ml-auto">
             {t("inventoryClearSelection")}
           </button>
         </div>
       )}
 
-      {/* grid — dense so 150+ items stay scannable, grouped by brand */}
+      {/* grid — dense so 150+ items stay scannable, grouped Category → Brand */}
       {filtered.length === 0 ? (
         <div className="text-sm text-stone-400 py-10 text-center">{t("inventoryEmpty")}</div>
       ) : (
-        <div className="space-y-5">
-          {grouped.map((group) => (
-            <div key={group.brand || "__all__"}>
-              {group.brand && (
-                <div className="text-[11px] font-bold tracking-widest uppercase text-stone-400 px-1 pb-1.5 border-b border-stone-100 mb-2">
-                  {group.brand} <span className="font-medium normal-case text-stone-300">· {group.items.length}</span>
+        <div className="space-y-6">
+          {groupedTree.map((catGroup) => {
+            const catItems = catGroup.brands.flatMap((b) => b.items);
+            const catSel = groupSelectionState(catItems);
+            return (
+              <div key={catGroup.category || "__all__"}>
+                {catGroup.category && (
+                  <div className="flex items-center gap-2 mb-2.5">
+                    {selectMode && (
+                      <input
+                        type="checkbox" checked={catSel.all} ref={(el) => { if (el) el.indeterminate = catSel.some; }}
+                        onChange={() => toggleGroupSelect(catItems)}
+                        className="w-4 h-4 accent-rose-400 flex-shrink-0" title={t("inventorySelectAll")}
+                      />
+                    )}
+                    <div className="text-[12px] font-bold tracking-widest uppercase text-stone-600 px-1 pb-1.5 border-b-2 border-stone-200 flex-1">
+                      {catGroup.category} <span className="font-medium normal-case text-stone-300">· {catItems.length}</span>
+                    </div>
+                  </div>
+                )}
+                <div className="space-y-3.5 pl-0.5">
+                  {catGroup.brands.map((brandGroup) => {
+                    const brandSel = groupSelectionState(brandGroup.items);
+                    return (
+                      <div key={brandGroup.brand || "__all__"}>
+                        {brandGroup.brand && (
+                          <div className="flex items-center gap-2 mb-1.5">
+                            {selectMode && (
+                              <input
+                                type="checkbox" checked={brandSel.all} ref={(el) => { if (el) el.indeterminate = brandSel.some; }}
+                                onChange={() => toggleGroupSelect(brandGroup.items)}
+                                className="w-3.5 h-3.5 accent-rose-400 flex-shrink-0" title={t("inventorySelectAll")}
+                              />
+                            )}
+                            <div className="text-[11px] font-bold tracking-wide uppercase text-stone-400 px-1 pb-1 border-b border-stone-100 flex-1">
+                              {brandGroup.brand} <span className="font-medium normal-case text-stone-300">· {brandGroup.items.length}</span>
+                            </div>
+                          </div>
+                        )}
+                        <div className="grid grid-cols-2 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-10 xl:grid-cols-12 gap-2 sm:gap-1">
+                          {brandGroup.items.map(renderCard)}
+                        </div>
+                      </div>
+                    );
+                  })}
                 </div>
-              )}
-              <div className="grid grid-cols-2 sm:grid-cols-6 md:grid-cols-8 lg:grid-cols-10 xl:grid-cols-12 gap-2 sm:gap-1">
-                {group.items.map(renderCard)}
               </div>
-            </div>
-          ))}
+            );
+          })}
         </div>
       )}
 
-      {isAdmin && (
-        <InventoryUsageReport t={t} lang={lang} />
-      )}
+      <InventoryRecentActivity t={t} lang={lang} />
 
       {showPasteModal && isAdmin && (
         <InventoryPasteModal t={t} lang={lang} onClose={() => setShowPasteModal(false)} onConfirm={onBulkUpsert} />
+      )}
+
+      {showUsageModal && isAdmin && (
+        <InventoryUsageEntryModal
+          t={t} lang={lang}
+          items={selectedItems}
+          onClose={() => setShowUsageModal(false)}
+          onConfirm={async (dateKey, entries) => {
+            await onRecordUsage(dateKey, entries);
+            setSelectedIds(new Set());
+          }}
+        />
       )}
     </div>
   );
@@ -3348,10 +3631,11 @@ function InventoryPage({
 
 /* ────────────────────────────────────────────────────
    INVENTORY PASTE-UPDATE MODAL
-   Accepts a raw Excel copy-paste. Two formats are both
-   auto-detected line-by-line:
-     "Item No.<TAB>Q'ty"                 → 2 columns
-     "Brand<TAB>Item No.<TAB>Q'ty"       → 3 columns
+   Accepts a raw Excel copy-paste. Formats auto-detected
+   line-by-line by column count:
+     2 columns → Item No. / Q'ty
+     3 columns → Brand / Item No. / Q'ty
+     4 columns → Category / Brand / Item No. / Q'ty
    A stray header row (text in the Q'ty column) is
    automatically skipped since it won't parse as a number.
 ──────────────────────────────────────────────────── */
@@ -3373,10 +3657,17 @@ function InventoryPasteModal({ t, lang, onClose, onConfirm }) {
       const qtyRaw = parts[parts.length - 1].trim().replace(/,/g, "");
       const qty = Number(qtyRaw);
 
-      if (parts.length >= 3) {
+      if (parts.length >= 4) {
+        // Category / Brand / Item No. / Q'ty
+        const category = parts[0].trim();
+        const brand = parts[1].trim();
+        const itemNo = parts.slice(2, -1).join(" ").trim();
+        if (!itemNo || Number.isNaN(qty)) { invalid++; return; }
+        rows.push({ category, brand, itemNo, qty });
+      } else if (parts.length === 3) {
         // Brand / Item No. / Q'ty
         const brand = parts[0].trim();
-        const itemNo = parts.slice(1, -1).join(" ").trim();
+        const itemNo = parts[1].trim();
         if (!itemNo || Number.isNaN(qty)) { invalid++; return; }
         rows.push({ brand, itemNo, qty });
       } else {
@@ -3409,7 +3700,9 @@ function InventoryPasteModal({ t, lang, onClose, onConfirm }) {
           <textarea
             value={text}
             onChange={(e) => setText(e.target.value)}
-            placeholder={"A001\t25\nA002\t10\nA003\t8\n\n" + (lang === "zh" ? "（也可貼 3 欄：品牌／編號／數量）\nOPI\tB010\t14" : "(3 columns also works: Brand / Item No. / Qty)\nOPI\tB010\t14")}
+            placeholder={"A001\t25\nA002\t10\nA003\t8\n\n" + (lang === "zh"
+              ? "（也可貼 3 欄：品牌／編號／數量，或 4 欄：種類／品牌／編號／數量）\nOPI\tB010\t14\n指甲油\tOPI\tB011\t20"
+              : "(3 columns: Brand/Item/Qty, or 4 columns: Category/Brand/Item/Qty also work)\nOPI\tB010\t14\nNail Polish\tOPI\tB011\t20")}
             rows={10}
             className="w-full px-3 py-2.5 border border-stone-200 rounded-lg text-xs font-mono bg-stone-50 outline-none focus:border-rose-300 resize-none"
           />
@@ -3437,124 +3730,186 @@ function InventoryPasteModal({ t, lang, onClose, onConfirm }) {
 }
 
 /* ────────────────────────────────────────────────────
-   INVENTORY USAGE REPORT (admin only)
-   Simple date-range analytics on top of the append-only
-   "inventoryMovements" log (see AppInner for how entries
-   get written on every qty change). This is intentionally
-   a lightweight read-only query tool — good enough for
-   "how much did we use of X between date A and B" without
-   needing a dedicated analytics backend.
+   RECORD USAGE MODAL
+   Flow: pick a consumption date → (items already chosen via
+   the grid's select mode) → type qty used per item → preview
+   the before/after table → confirm & save. Matches the
+   input-first workflow explicitly requested — not a report.
 ──────────────────────────────────────────────────── */
 
-function InventoryUsageReport({ t, lang }) {
+function InventoryUsageEntryModal({ t, lang, items, onClose, onConfirm }) {
+  const [date, setDate] = useState(todayStr());
+  const [qtyMap, setQtyMap] = useState(() => Object.fromEntries(items.map((i) => [i.id, ""])));
+  const [step, setStep] = useState("input"); // "input" | "preview"
+  const [saving, setSaving] = useState(false);
+
+  const setQty = (id, val) => setQtyMap((prev) => ({ ...prev, [id]: val }));
+
+  const entries = useMemo(() => {
+    return items
+      .map((item) => {
+        const used = Number(qtyMap[item.id]);
+        if (!qtyMap[item.id] || Number.isNaN(used) || used <= 0) return null;
+        const qtyBefore = Number(item.qty) || 0;
+        const qtyAfter = Math.max(0, qtyBefore - used);
+        return { id: item.id, itemNo: item.itemNo, brand: item.brand, category: item.category, used, qtyBefore, qtyAfter };
+      })
+      .filter(Boolean);
+  }, [items, qtyMap]);
+
+  const goPreview = () => {
+    if (!entries.length) { return; }
+    setStep("preview");
+  };
+
+  const handleConfirm = async () => {
+    setSaving(true);
+    await onConfirm(date, entries);
+    setSaving(false);
+    onClose();
+  };
+
+  return (
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={onClose}>
+      <div className="bg-white rounded-2xl w-full max-w-xl max-h-[90vh] overflow-y-auto shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-6 py-4 border-b border-stone-100">
+          <h2 className="font-display text-xl font-light text-stone-800">{t("inventoryUsageEntryTitle")}</h2>
+          <button type="button" onClick={onClose} className="text-stone-400 hover:text-rose-400 transition"><X size={20} /></button>
+        </div>
+
+        {step === "input" ? (
+          <>
+            <div className="px-6 py-4 space-y-4">
+              <GField label={t("inventoryUsageDate")}>
+                <input type="date" value={date} onChange={(e) => setDate(e.target.value)} className="ginput" />
+                <style>{`.ginput { padding:9px 12px; border:1px solid #E7E5E4; border-radius:8px; font-size:13px; background:#FAFAF9; outline:none; transition:border-color .15s; } .ginput:focus { border-color:#FB7185; background:white; }`}</style>
+              </GField>
+              <div className="text-xs text-stone-400">{t("inventoryUsageStep")}: {items.length}</div>
+              <div className="space-y-1.5 max-h-72 overflow-y-auto border border-stone-100 rounded-lg divide-y divide-stone-50">
+                {items.map((item) => (
+                  <div key={item.id} className="flex items-center gap-3 px-3 py-2">
+                    <div className="flex-1 min-w-0">
+                      <div className="text-xs font-semibold text-stone-700 truncate">{item.itemNo}</div>
+                      <div className="text-[11px] text-stone-400 truncate">{item.brand || t("inventoryNoBrand")} · {t("inventoryUsageBefore")} {item.qty ?? 0}</div>
+                    </div>
+                    <input
+                      type="number" min="0" value={qtyMap[item.id]}
+                      onChange={(e) => setQty(item.id, e.target.value)}
+                      placeholder="0"
+                      className="w-20 px-2 py-1.5 border border-stone-200 rounded-lg text-sm text-right outline-none focus:border-rose-300"
+                    />
+                  </div>
+                ))}
+              </div>
+            </div>
+            <div className="flex items-center gap-2 px-6 py-4 border-t border-stone-100">
+              <button type="button" onClick={onClose} className="text-sm font-medium text-stone-500 border border-stone-200 hover:border-stone-300 px-4 py-2 rounded-lg transition ml-auto">
+                {t("cancel")}
+              </button>
+              <button type="button" onClick={goPreview} disabled={!entries.length}
+                className="text-sm font-medium bg-rose-400 hover:bg-rose-500 disabled:opacity-50 text-white px-4 py-2 rounded-lg transition">
+                {t("inventoryUsagePreview")}
+              </button>
+            </div>
+            {!entries.length && Object.values(qtyMap).some((v) => v !== "") && (
+              <div className="px-6 pb-4 -mt-2 text-xs text-amber-500">{t("inventoryUsageNoQty")}</div>
+            )}
+          </>
+        ) : (
+          <>
+            <div className="px-6 py-4">
+              <div className="text-xs text-stone-400 mb-3">{t("inventoryUsageDate")}: <b className="text-stone-700">{date}</b></div>
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="text-left text-[11px] text-stone-400 uppercase tracking-wide border-b border-stone-100">
+                      <th className="py-2 pr-3 font-medium">{t("inventoryItemNo")}</th>
+                      <th className="py-2 pr-3 font-medium text-right">{t("inventoryUsageBefore")}</th>
+                      <th className="py-2 pr-3 font-medium text-right">{t("inventoryUsageQtyLabel")}</th>
+                      <th className="py-2 pr-3 font-medium text-right">{t("inventoryUsageAfter")}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {entries.map((e) => (
+                      <tr key={e.id} className="border-b border-stone-50">
+                        <td className="py-2 pr-3 font-medium text-stone-800">{e.itemNo}</td>
+                        <td className="py-2 pr-3 text-right text-stone-500">{e.qtyBefore}</td>
+                        <td className="py-2 pr-3 text-right text-rose-500 font-semibold">−{e.used}</td>
+                        <td className="py-2 pr-3 text-right font-semibold text-stone-800">{e.qtyAfter}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            </div>
+            <div className="flex items-center gap-2 px-6 py-4 border-t border-stone-100">
+              <button type="button" onClick={() => setStep("input")}
+                className="flex items-center gap-1.5 text-sm font-medium text-stone-500 border border-stone-200 hover:border-stone-300 px-4 py-2 rounded-lg transition">
+                <ArrowLeft size={14} /> {t("inventoryUsageBack")}
+              </button>
+              <button type="button" onClick={handleConfirm} disabled={saving}
+                className="text-sm font-medium bg-rose-400 hover:bg-rose-500 disabled:opacity-60 text-white px-4 py-2 rounded-lg transition ml-auto">
+                {saving ? t("inventoryLoadingReport") : t("inventoryUsageConfirm")}
+              </button>
+            </div>
+          </>
+        )}
+      </div>
+    </div>
+  );
+}
+
+/* ────────────────────────────────────────────────────
+   RECENT ACTIVITY — a lightweight live feed of the most
+   recent inventoryMovements entries (any change type), so
+   admins get a quick sanity-check that paste-updates and
+   usage entries actually saved. Not a query/report tool.
+──────────────────────────────────────────────────── */
+
+function InventoryRecentActivity({ t, lang }) {
   const [open, setOpen] = useState(false);
-  const [start, setStart] = useState(dateStr(-6));
-  const [end, setEnd] = useState(todayStr());
-  const [loading, setLoading] = useState(false);
-  const [rows, setRows] = useState(null); // null = not run yet
+  const [rows, setRows] = useState([]);
 
-  const quickRange = (kind) => {
-    const now = new Date();
-    if (kind === "today") { setStart(todayStr()); setEnd(todayStr()); }
-    else if (kind === "7d") { setStart(dateStr(-6)); setEnd(todayStr()); }
-    else if (kind === "30d") { setStart(dateStr(-29)); setEnd(todayStr()); }
-    else if (kind === "month") {
-      const first = new Date(now.getFullYear(), now.getMonth(), 1);
-      setStart(localDateKey(first)); setEnd(todayStr());
-    }
-  };
+  useEffect(() => {
+    if (!open) return;
+    const q = query(collection(db, "inventoryMovements"), orderBy("recordedAt", "desc"), limit(15));
+    const unsub = onSnapshot(q, (snap) => setRows(snap.docs.map((d) => ({ id: d.id, ...d.data() }))),
+      (err) => console.error("inventory recent activity error:", err));
+    return unsub;
+  }, [open]);
 
-  const runReport = async () => {
-    setLoading(true);
-    try {
-      const q = query(
-        collection(db, "inventoryMovements"),
-        where("dateKey", ">=", start),
-        where("dateKey", "<=", end)
-      );
-      const snap = await getDocs(q);
-      const byItem = new Map();
-      snap.docs.forEach((d) => {
-        const m = d.data();
-        const key = m.itemId || m.itemNo;
-        if (!byItem.has(key)) {
-          byItem.set(key, { itemNo: m.itemNo, brand: m.brand || "", used: 0, restocked: 0, net: 0 });
-        }
-        const agg = byItem.get(key);
-        const delta = Number(m.delta) || 0;
-        if (delta < 0) agg.used += -delta; else agg.restocked += delta;
-        agg.net += delta;
-      });
-      const list = [...byItem.values()].sort((a, b) => b.used - a.used);
-      setRows(list);
-    } catch (err) {
-      console.error("inventory usage report error:", err);
-      setRows([]);
-    } finally {
-      setLoading(false);
-    }
-  };
+  const typeLabel = (type) => ({
+    new_item: t("inventoryTypeNewItem"),
+    manual_edit: t("inventoryTypeManualEdit"),
+    bump: t("inventoryTypeBump"),
+    bulk_paste: t("inventoryTypeBulkPaste"),
+    usage_entry: t("inventoryTypeUsageEntry"),
+  }[type] || type);
 
   return (
     <div className="mt-8 bg-white border border-stone-200 rounded-xl shadow-sm">
       <button type="button" onClick={() => setOpen((v) => !v)}
         className="w-full flex items-center justify-between px-5 py-4 text-left">
-        <span className="font-display text-lg font-light text-stone-800">{t("inventoryUsageReport")}</span>
+        <span className="font-display text-lg font-light text-stone-800">{t("inventoryRecentActivity")}</span>
         {open ? <ChevronUp size={18} className="text-stone-400" /> : <ChevronDown size={18} className="text-stone-400" />}
       </button>
       {open && (
-        <div className="px-5 pb-5 border-t border-stone-100 pt-4">
-          <p className="text-xs text-stone-400 mb-3 leading-relaxed">{t("inventoryUsageDesc")}</p>
-          <div className="flex flex-wrap items-end gap-2 mb-3">
-            <GField label={t("inventoryStartDate")}>
-              <input type="date" value={start} onChange={(e) => setStart(e.target.value)} className="ginput" />
-            </GField>
-            <GField label={t("inventoryEndDate")}>
-              <input type="date" value={end} onChange={(e) => setEnd(e.target.value)} className="ginput" />
-            </GField>
-            <button type="button" onClick={runReport} disabled={loading}
-              className="text-sm font-medium bg-rose-400 hover:bg-rose-500 disabled:opacity-60 text-white px-4 py-2.5 rounded-lg transition">
-              {loading ? t("inventoryLoadingReport") : t("inventoryRunReport")}
-            </button>
-            <style>{`.ginput { padding:9px 12px; border:1px solid #E7E5E4; border-radius:8px; font-size:13px; background:#FAFAF9; outline:none; transition:border-color .15s; } .ginput:focus { border-color:#FB7185; background:white; }`}</style>
-          </div>
-          <div className="flex flex-wrap gap-1.5 mb-4">
-            {[["today", t("inventoryQuickToday")], ["7d", t("inventoryQuick7")], ["month", t("inventoryQuickMonth")], ["30d", t("inventoryQuick30")]].map(([k, label]) => (
-              <button key={k} type="button" onClick={() => quickRange(k)}
-                className="text-[11px] font-medium px-2.5 py-1 rounded-full border border-stone-200 text-stone-500 hover:border-rose-300 hover:text-rose-500 transition">
-                {label}
-              </button>
-            ))}
-          </div>
-
-          {rows === null ? null : rows.length === 0 ? (
-            <div className="text-sm text-stone-400 py-6 text-center">{t("inventoryReportEmpty")}</div>
+        <div className="px-5 pb-5 border-t border-stone-100 pt-3">
+          {rows.length === 0 ? (
+            <div className="text-sm text-stone-400 py-4 text-center">{t("inventoryActivityEmpty")}</div>
           ) : (
-            <div className="overflow-x-auto">
-              <table className="w-full text-sm">
-                <thead>
-                  <tr className="text-left text-[11px] text-stone-400 uppercase tracking-wide border-b border-stone-100">
-                    <th className="py-2 pr-3 font-medium">{t("inventoryBrand")}</th>
-                    <th className="py-2 pr-3 font-medium">{t("inventoryItemNo")}</th>
-                    <th className="py-2 pr-3 font-medium text-right">{t("inventoryUsed")}</th>
-                    <th className="py-2 pr-3 font-medium text-right">{t("inventoryRestocked")}</th>
-                    <th className="py-2 pr-3 font-medium text-right">{t("inventoryNetChange")}</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {rows.map((r) => (
-                    <tr key={`${r.brand}-${r.itemNo}`} className="border-b border-stone-50">
-                      <td className="py-2 pr-3 text-stone-500 text-xs">{r.brand || t("inventoryNoBrand")}</td>
-                      <td className="py-2 pr-3 font-medium text-stone-800">{r.itemNo}</td>
-                      <td className="py-2 pr-3 text-right text-rose-500 font-semibold">{r.used || "—"}</td>
-                      <td className="py-2 pr-3 text-right text-green-600 font-semibold">{r.restocked || "—"}</td>
-                      <td className={`py-2 pr-3 text-right font-semibold ${r.net < 0 ? "text-rose-500" : r.net > 0 ? "text-green-600" : "text-stone-400"}`}>
-                        {r.net > 0 ? `+${r.net}` : r.net}
-                      </td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
+            <div className="space-y-1.5">
+              {rows.map((r) => (
+                <div key={r.id} className="flex items-center gap-2 text-xs py-1.5 border-b border-stone-50 last:border-0">
+                  <span className="px-1.5 py-0.5 rounded bg-stone-100 text-stone-500 font-medium flex-shrink-0">{typeLabel(r.changeType)}</span>
+                  <span className="font-medium text-stone-700 truncate">{r.itemNo}</span>
+                  <span className="text-stone-400 truncate">{r.brand || t("inventoryNoBrand")}</span>
+                  <span className={`ml-auto font-semibold flex-shrink-0 ${r.delta < 0 ? "text-rose-500" : r.delta > 0 ? "text-green-600" : "text-stone-400"}`}>
+                    {r.delta > 0 ? `+${r.delta}` : r.delta}
+                  </span>
+                  <span className="text-stone-300 flex-shrink-0">{r.dateKey}</span>
+                </div>
+              ))}
             </div>
           )}
         </div>
@@ -3562,7 +3917,6 @@ function InventoryUsageReport({ t, lang }) {
     </div>
   );
 }
-
 
 /* ════════════════════════════════════════════════════
    ADMIN INTRO EDITOR (lives inside CalendarPage header as a small button)
