@@ -486,7 +486,7 @@ const T = {
   /* Settings — system info */
   settingsSystemInfo: { zh: "系統資訊", en: "System Info" },
   settingsDeployTime: { zh: "系統更新（部署）時間", en: "Last Deployed" },
-  settingsDeployTimeNote: { zh: "此時間取自網頁檔案的最後修改時間（即 Vercel 部署時間的近似值）。若要顯示精確的建置時間，可在 vite.config.js 加入 define VITE_BUILD_TIME 設定。", en: "This reads the page file's last-modified time (an approximation of the Vercel deploy time). For an exact build timestamp, add a VITE_BUILD_TIME define to vite.config.js." },
+  settingsDeployTimeNote: { zh: "此時間取自網頁檔案的最後修改時間（即 Vercel 部署時間的近似值）。若要顯示精確的建置時間，可在 package.json 的 build 指令前加上 REACT_APP_BUILD_TIME 環境變數。", en: "This reads the page file's last-modified time (an approximation of the Vercel deploy time). For an exact build timestamp, prefix the build script in package.json with a REACT_APP_BUILD_TIME env variable." },
 
   /* Booking list — staff cutoff + admin filters + member leads */
   pendingStaffNotice: { zh: "顯示最近 30 天內的預約紀錄（由新到舊）。", en: "Showing bookings from the last 30 days (newest first)." },
@@ -4672,20 +4672,22 @@ function SettingsPage({ t, lang, introText, onSaveIntro }) {
   const [dirty, setDirty] = useState(false);
 
   // Deployment / build timestamp.
-  // Priority 1: VITE_BUILD_TIME — inject at build time via vite.config.js:
-  //   define: { "import.meta.env.VITE_BUILD_TIME": JSON.stringify(new Date().toISOString()) }
-  //   (this captures the exact moment Vercel ran `vite build`)
+  // NOTE: this project builds with react-scripts (webpack), so `import.meta`
+  // is a parse-time SyntaxError and must never appear here.
+  // Priority 1: REACT_APP_BUILD_TIME — inject at build time by adding this
+  //   to package.json's build script (CRA replaces it as a literal string):
+  //     "build": "REACT_APP_BUILD_TIME=$(date -u +%Y-%m-%dT%H:%M:%SZ) react-scripts build"
+  //   (on Vercel the default Linux build image supports this directly)
   // Priority 2 (zero-config fallback): document.lastModified — on Vercel's
   //   static hosting this reflects when index.html was deployed, so it's a
   //   good approximation without any config changes.
   const deployTime = useMemo(() => {
     try {
-      const envTime = import.meta?.env?.VITE_BUILD_TIME;
-      if (envTime) {
-        const d = new Date(envTime);
+      if (typeof process !== "undefined" && process.env && process.env.REACT_APP_BUILD_TIME) {
+        const d = new Date(process.env.REACT_APP_BUILD_TIME);
         if (!isNaN(d.getTime())) return { date: d, source: "build" };
       }
-    } catch (e) { /* import.meta.env unavailable outside Vite */ }
+    } catch (e) { /* process.env unavailable in this bundler */ }
     const d = new Date(document.lastModified);
     return isNaN(d.getTime()) ? null : { date: d, source: "lastModified" };
   }, []);
