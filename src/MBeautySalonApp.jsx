@@ -481,6 +481,32 @@ const T = {
   inventoryPasteAddNew: { zh: "+ 新增...", en: "+ Add new..." },
   inventoryPasteNewCategoryPlaceholder: { zh: "輸入新種類名稱", en: "Enter new category name" },
   inventoryPasteNewBrandPlaceholder: { zh: "輸入新品牌名稱", en: "Enter new brand name" },
+  inventoryPastePrevQty: { zh: "原本", en: "was" },
+
+  /* Settings — system info */
+  settingsSystemInfo: { zh: "系統資訊", en: "System Info" },
+  settingsDeployTime: { zh: "系統更新（部署）時間", en: "Last Deployed" },
+  settingsDeployTimeNote: { zh: "此時間取自網頁檔案的最後修改時間（即 Vercel 部署時間的近似值）。若要顯示精確的建置時間，可在 vite.config.js 加入 define VITE_BUILD_TIME 設定。", en: "This reads the page file's last-modified time (an approximation of the Vercel deploy time). For an exact build timestamp, add a VITE_BUILD_TIME define to vite.config.js." },
+
+  /* Booking list — staff cutoff + admin filters + member leads */
+  pendingStaffNotice: { zh: "顯示最近 30 天內的預約紀錄（由新到舊）。", en: "Showing bookings from the last 30 days (newest first)." },
+  pendingRangeStart: { zh: "起始日期", en: "Start Date" },
+  pendingRangeEnd: { zh: "結束日期", en: "End Date" },
+  pendingRangeAll: { zh: "全部", en: "All" },
+  pendingRangeMonth: { zh: "本月", en: "This Month" },
+  pendingRange30: { zh: "近30天", en: "Last 30 Days" },
+  pendingRange90: { zh: "近90天", en: "Last 90 Days" },
+  pendingSortNewFirst: { zh: "排序：新→舊", en: "Sort: New → Old" },
+  pendingSortOldFirst: { zh: "排序：舊→新", en: "Sort: Old → New" },
+  pendingOnlyPhone: { zh: "只看有電話", en: "Has phone only" },
+  pendingOnlySocial: { zh: "只看有社群帳號", en: "Has social only" },
+  pendingResultCount: { zh: "符合筆數", en: "Results" },
+  pendingMemberPanel: { zh: "潛在會員名單", en: "Member Leads" },
+  pendingMemberDesc: { zh: "依目前篩選結果自動去除重複（以電話優先、其次社群帳號比對），僅列出至少留有一種聯絡方式的顧客，可直接匯出成 CSV 建立會員資料。", en: "Deduplicated from the current filtered results (matched by phone first, then social handle). Only customers with at least one contact channel are listed. Export as CSV to build your member database." },
+  pendingMemberExport: { zh: "匯出 CSV", en: "Export CSV" },
+  pendingMemberEmpty: { zh: "目前篩選結果中沒有留下聯絡方式的顧客", en: "No customers with contact info in the current filter" },
+  pendingMemberVisits: { zh: "預約次數", en: "Bookings" },
+  pendingMemberLastVisit: { zh: "最近預約日", en: "Last Booking" },
   inventoryPasteDesc: { zh: "從 Excel 複製兩欄資料（品項編號、數量）後直接貼在下方，系統會自動比對：已存在的品項會更新數量、沒出現過的品項會自動新增。", en: "Copy two columns from Excel (Item No., Qty) and paste below. Existing items will be updated and new ones added automatically." },
   inventoryPasteMatched: { zh: "可匯入筆數", en: "Rows to import" },
   inventoryPasteInvalid: { zh: "無法辨識", en: "Unrecognized" },
@@ -3090,12 +3116,85 @@ function StaffBranchCard({ t, lang, branch, idx, names, addStaff, removeStaff })
 function PendingPage({ t, lang, services, bookings, isAdmin }) {
   const BRANCH_NAMES = { 0: "Lahug (Salinas Premier)", 1: "Emall (2nd Floor)" };
 
-  // Sort by submittedAt desc (most recent first), fallback to date field
-  const sorted = [...bookings].sort((a, b) => {
-    const ta = a.submittedAt?.toDate?.()?.getTime?.() ?? 0;
-    const tb = b.submittedAt?.toDate?.()?.getTime?.() ?? 0;
-    return tb - ta;
-  });
+  /* ── Admin-only filter/sort state ── */
+  const [rangeStart, setRangeStart] = useState("");
+  const [rangeEnd, setRangeEnd] = useState("");
+  const [sortOldFirst, setSortOldFirst] = useState(false);
+  const [onlyPhone, setOnlyPhone] = useState(false);
+  const [onlySocial, setOnlySocial] = useState(false);
+  const [showMemberPanel, setShowMemberPanel] = useState(false);
+
+  const submittedMs = (b) => b.submittedAt?.toDate?.()?.getTime?.() ?? 0;
+
+  // Staff: hard-limited to the last 30 days (by submission time), newest
+  // first — same view as before, just with the cutoff. Admin: everything,
+  // then their own filters apply on top.
+  const visible = useMemo(() => {
+    let list = bookings;
+    if (!isAdmin) {
+      const cutoff = Date.now() - 30 * 24 * 3600 * 1000;
+      list = list.filter((b) => submittedMs(b) >= cutoff);
+    } else {
+      if (rangeStart) list = list.filter((b) => (b.date || "") >= rangeStart);
+      if (rangeEnd) list = list.filter((b) => (b.date || "") <= rangeEnd);
+      if (onlyPhone) list = list.filter((b) => (b.phone || "").trim());
+      if (onlySocial) list = list.filter((b) => (b.social || "").trim());
+    }
+    const sorted = [...list].sort((a, b) => submittedMs(b) - submittedMs(a));
+    if (isAdmin && sortOldFirst) sorted.reverse();
+    return sorted;
+  }, [bookings, isAdmin, rangeStart, rangeEnd, onlyPhone, onlySocial, sortOldFirst]);
+
+  // Potential-member roster: dedupe filtered bookings by phone (preferred)
+  // or social handle, keeping only entries that have at least one contact
+  // channel — the stated criterion for a member lead. Aggregates per person:
+  // visit count + first/last booking date.
+  const memberLeads = useMemo(() => {
+    if (!isAdmin) return [];
+    const map = new Map();
+    visible.forEach((b) => {
+      const phone = (b.phone || "").trim();
+      const social = (b.social || "").trim();
+      if (!phone && !social) return;
+      const key = phone ? `p:${phone.replace(/\D/g, "") || phone.toLowerCase()}` : `s:${social.toLowerCase()}`;
+      if (!map.has(key)) {
+        map.set(key, { name: b.name || "", phone, social, contactVia: b.contactVia || "", count: 0, firstDate: b.date || "", lastDate: b.date || "" });
+      }
+      const rec = map.get(key);
+      rec.count += 1;
+      if (!rec.name && b.name) rec.name = b.name;
+      if (!rec.phone && phone) rec.phone = phone;
+      if (!rec.social && social) rec.social = social;
+      if (!rec.contactVia && b.contactVia) rec.contactVia = b.contactVia;
+      if (b.date && (!rec.firstDate || b.date < rec.firstDate)) rec.firstDate = b.date;
+      if (b.date && (!rec.lastDate || b.date > rec.lastDate)) rec.lastDate = b.date;
+    });
+    return [...map.values()].sort((a, b) => b.count - a.count);
+  }, [visible, isAdmin]);
+
+  const exportMembersCsv = () => {
+    const header = ["Name", "Phone", "Social", "Contact Via", "Bookings", "First Date", "Last Date"];
+    const escape = (v) => `"${String(v ?? "").replace(/"/g, '""')}"`;
+    const lines = [header.join(",")];
+    memberLeads.forEach((m) => {
+      lines.push([m.name, m.phone, m.social, m.contactVia, m.count, m.firstDate, m.lastDate].map(escape).join(","));
+    });
+    const blob = new Blob(["\uFEFF" + lines.join("\n")], { type: "text/csv;charset=utf-8" });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `member-leads-${todayStr()}.csv`;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+
+  const setQuickRange = (kind) => {
+    const now = new Date();
+    if (kind === "all") { setRangeStart(""); setRangeEnd(""); }
+    else if (kind === "month") { setRangeStart(localDateKey(new Date(now.getFullYear(), now.getMonth(), 1))); setRangeEnd(todayStr()); }
+    else if (kind === "30d") { setRangeStart(dateStr(-29)); setRangeEnd(todayStr()); }
+    else if (kind === "90d") { setRangeStart(dateStr(-89)); setRangeEnd(todayStr()); }
+  };
 
   const formatSubmittedAt = (ts) => {
     if (!ts?.toDate) return "—";
@@ -3117,17 +3216,112 @@ function PendingPage({ t, lang, services, bookings, isAdmin }) {
   return (
     <div>
       <h1
-        className="font-display text-2xl md:text-3xl font-light text-stone-800 mb-5"
+        className="font-display text-2xl md:text-3xl font-light text-stone-800 mb-2"
         dangerouslySetInnerHTML={{ __html: t("pendingTitle") }}
       />
 
-      {sorted.length === 0 ? (
+      {!isAdmin && (
+        <p className="text-xs text-stone-400 mb-4">{t("pendingStaffNotice")}</p>
+      )}
+
+      {/* ── Admin filter bar ── */}
+      {isAdmin && (
+        <div className="bg-white border border-stone-200 rounded-xl p-4 shadow-sm mb-4 space-y-3">
+          <div className="flex flex-wrap items-end gap-2.5">
+            <div>
+              <label className="text-[11px] font-medium text-stone-400 mb-1 block">{t("pendingRangeStart")}</label>
+              <input type="date" value={rangeStart} onChange={(e) => setRangeStart(e.target.value)}
+                className="px-2.5 py-1.5 border border-stone-200 rounded-lg text-xs bg-white outline-none focus:border-rose-300" />
+            </div>
+            <div>
+              <label className="text-[11px] font-medium text-stone-400 mb-1 block">{t("pendingRangeEnd")}</label>
+              <input type="date" value={rangeEnd} onChange={(e) => setRangeEnd(e.target.value)}
+                className="px-2.5 py-1.5 border border-stone-200 rounded-lg text-xs bg-white outline-none focus:border-rose-300" />
+            </div>
+            <div className="flex gap-1.5">
+              {[["all", t("pendingRangeAll")], ["month", t("pendingRangeMonth")], ["30d", t("pendingRange30")], ["90d", t("pendingRange90")]].map(([k, label]) => (
+                <button key={k} type="button" onClick={() => setQuickRange(k)}
+                  className="text-[11px] font-medium px-2.5 py-1.5 rounded-full border border-stone-200 text-stone-500 hover:border-rose-300 hover:text-rose-500 transition">
+                  {label}
+                </button>
+              ))}
+            </div>
+            <button type="button" onClick={() => setSortOldFirst((v) => !v)}
+              className={`text-[11px] font-medium px-2.5 py-1.5 rounded-lg border transition ${sortOldFirst ? "bg-stone-800 text-white border-stone-800" : "border-stone-200 text-stone-500 hover:border-rose-300"}`}>
+              {sortOldFirst ? t("pendingSortOldFirst") : t("pendingSortNewFirst")}
+            </button>
+          </div>
+          <div className="flex flex-wrap items-center gap-4">
+            <label className="flex items-center gap-1.5 text-xs text-stone-500 cursor-pointer select-none">
+              <input type="checkbox" checked={onlyPhone} onChange={(e) => setOnlyPhone(e.target.checked)} className="w-3.5 h-3.5 accent-rose-400" />
+              {t("pendingOnlyPhone")}
+            </label>
+            <label className="flex items-center gap-1.5 text-xs text-stone-500 cursor-pointer select-none">
+              <input type="checkbox" checked={onlySocial} onChange={(e) => setOnlySocial(e.target.checked)} className="w-3.5 h-3.5 accent-rose-400" />
+              {t("pendingOnlySocial")}
+            </label>
+            <span className="text-xs text-stone-400 ml-auto">
+              {t("pendingResultCount")}: <b className="text-stone-600">{visible.length}</b>
+            </span>
+            <button type="button" onClick={() => setShowMemberPanel((v) => !v)}
+              className={`flex items-center gap-1.5 text-xs font-semibold px-3 py-1.5 rounded-lg transition ${showMemberPanel ? "bg-rose-400 text-white" : "border border-rose-300 text-rose-500 hover:bg-rose-50"}`}>
+              <Users size={13} /> {t("pendingMemberPanel")} ({memberLeads.length})
+            </button>
+          </div>
+        </div>
+      )}
+
+      {/* ── Potential-member roster (admin) ── */}
+      {isAdmin && showMemberPanel && (
+        <div className="bg-white border border-rose-200 rounded-xl p-4 shadow-sm mb-4">
+          <div className="flex items-center justify-between flex-wrap gap-2 mb-3">
+            <div>
+              <h2 className="text-sm font-semibold text-stone-700">{t("pendingMemberPanel")}</h2>
+              <p className="text-[11px] text-stone-400 mt-0.5">{t("pendingMemberDesc")}</p>
+            </div>
+            <button type="button" onClick={exportMembersCsv} disabled={!memberLeads.length}
+              className="flex items-center gap-1.5 text-xs font-semibold bg-rose-400 hover:bg-rose-500 disabled:opacity-40 text-white px-3 py-2 rounded-lg transition">
+              <FileText size={13} /> {t("pendingMemberExport")}
+            </button>
+          </div>
+          {memberLeads.length === 0 ? (
+            <div className="text-xs text-stone-400 py-4 text-center">{t("pendingMemberEmpty")}</div>
+          ) : (
+            <div className="overflow-x-auto">
+              <table className="w-full text-xs">
+                <thead>
+                  <tr className="text-left text-[10px] text-stone-400 uppercase tracking-wide border-b border-stone-100">
+                    <th className="py-2 pr-3 font-medium">{t("guestName")}</th>
+                    <th className="py-2 pr-3 font-medium">{t("phone")}</th>
+                    <th className="py-2 pr-3 font-medium">FB/IG</th>
+                    <th className="py-2 pr-3 font-medium text-right">{t("pendingMemberVisits")}</th>
+                    <th className="py-2 pr-3 font-medium">{t("pendingMemberLastVisit")}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {memberLeads.map((m, idx) => (
+                    <tr key={idx} className="border-b border-stone-50">
+                      <td className="py-2 pr-3 font-medium text-stone-700">{m.name || "—"}</td>
+                      <td className="py-2 pr-3 text-stone-600">{m.phone || "—"}</td>
+                      <td className="py-2 pr-3 text-stone-600">{m.social || "—"}</td>
+                      <td className="py-2 pr-3 text-right font-semibold text-stone-700">{m.count}</td>
+                      <td className="py-2 pr-3 text-stone-500">{m.lastDate || "—"}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          )}
+        </div>
+      )}
+
+      {visible.length === 0 ? (
         <div className="bg-white border border-stone-200 rounded-xl p-8 text-center text-stone-400 text-sm shadow-sm">
           {t("pendingEmpty")}
         </div>
       ) : (
         <div className="space-y-3">
-          {sorted.map((b) => (
+          {visible.map((b) => (
             <div key={b.id} className="bg-white border border-stone-200 rounded-xl p-4 shadow-sm">
               <div className="flex items-start justify-between gap-3 flex-wrap">
                 <div className="min-w-0 flex-1">
@@ -4102,11 +4296,12 @@ function InventoryPasteModal({ t, lang, inventory, onClose, onConfirm }) {
       if (hasBrandColumn) {
         const br = r.brand.trim().toLowerCase();
         const match = inventory.find((i) => (i.itemNo || "").trim().toLowerCase() === no && (i.brand || "").trim().toLowerCase() === br);
-        return { ...r, status: match ? "update" : "new" };
+        return { ...r, status: match ? "update" : "new", prevQty: match ? (Number(match.qty) || 0) : null };
       }
       const candidates = inventory.filter((i) => (i.itemNo || "").trim().toLowerCase() === no);
-      if (candidates.length > 1) return { ...r, status: "skip" };
-      return { ...r, status: candidates.length === 1 ? "update" : "new" };
+      if (candidates.length > 1) return { ...r, status: "skip", prevQty: null };
+      const match = candidates[0] || null;
+      return { ...r, status: match ? "update" : "new", prevQty: match ? (Number(match.qty) || 0) : null };
     });
   }, [effectiveRows, inventory]);
 
@@ -4228,7 +4423,26 @@ function InventoryPasteModal({ t, lang, inventory, onClose, onConfirm }) {
                         {r.category ? `${r.category} · ` : ""}{r.brand || t("inventoryNoBrand")}
                       </div>
                     </div>
-                    <span className="font-semibold text-stone-600 flex-shrink-0">{r.qty}</span>
+                    {r.status === "update" ? (
+                      <span className="flex items-center gap-1 flex-shrink-0">
+                        <span className="text-stone-400">{t("inventoryPastePrevQty")} <b className="text-stone-500">{r.prevQty}</b></span>
+                        <span className="text-stone-300">→</span>
+                        <span className={`font-bold ${r.qty > r.prevQty ? "text-green-600" : r.qty < r.prevQty ? "text-rose-500" : "text-stone-600"}`}>{r.qty}</span>
+                        {r.qty !== r.prevQty && (
+                          <span className={`text-[10px] font-semibold ${r.qty > r.prevQty ? "text-green-500" : "text-rose-400"}`}>
+                            ({r.qty > r.prevQty ? `+${r.qty - r.prevQty}` : r.qty - r.prevQty})
+                          </span>
+                        )}
+                      </span>
+                    ) : r.status === "new" ? (
+                      <span className="flex items-center gap-1 flex-shrink-0">
+                        <span className="text-stone-300">—</span>
+                        <span className="text-stone-300">→</span>
+                        <span className="font-bold text-green-600">{r.qty}</span>
+                      </span>
+                    ) : (
+                      <span className="font-semibold text-stone-400 flex-shrink-0 line-through">{r.qty}</span>
+                    )}
                     {statusBadge(r.status)}
                   </div>
                 ))}
@@ -4457,6 +4671,30 @@ function SettingsPage({ t, lang, introText, onSaveIntro }) {
   const [en, setEn] = useState(introText?.en || "");
   const [dirty, setDirty] = useState(false);
 
+  // Deployment / build timestamp.
+  // Priority 1: VITE_BUILD_TIME — inject at build time via vite.config.js:
+  //   define: { "import.meta.env.VITE_BUILD_TIME": JSON.stringify(new Date().toISOString()) }
+  //   (this captures the exact moment Vercel ran `vite build`)
+  // Priority 2 (zero-config fallback): document.lastModified — on Vercel's
+  //   static hosting this reflects when index.html was deployed, so it's a
+  //   good approximation without any config changes.
+  const deployTime = useMemo(() => {
+    try {
+      const envTime = import.meta?.env?.VITE_BUILD_TIME;
+      if (envTime) {
+        const d = new Date(envTime);
+        if (!isNaN(d.getTime())) return { date: d, source: "build" };
+      }
+    } catch (e) { /* import.meta.env unavailable outside Vite */ }
+    const d = new Date(document.lastModified);
+    return isNaN(d.getTime()) ? null : { date: d, source: "lastModified" };
+  }, []);
+
+  const formatDeploy = (d) => d.toLocaleString(lang === "zh" ? "zh-TW" : "en-US", {
+    year: "numeric", month: "short", day: "numeric",
+    hour: "2-digit", minute: "2-digit",
+  });
+
   useEffect(() => {
     setZh(introText?.zh || "");
     setEn(introText?.en || "");
@@ -4505,6 +4743,19 @@ function SettingsPage({ t, lang, introText, onSaveIntro }) {
           className="mt-4 bg-rose-400 hover:bg-rose-500 disabled:opacity-40 text-white text-sm font-medium px-4 py-2 rounded-lg transition">
           {t("saveIntro")}
         </button>
+      </div>
+
+      {/* System info — deployment timestamp */}
+      <div className="bg-white border border-stone-200 rounded-xl shadow-sm p-5 mt-4">
+        <h2 className="text-sm font-semibold text-stone-700 mb-3">{t("settingsSystemInfo")}</h2>
+        <div className="flex items-center gap-2 text-sm text-stone-600">
+          <Clock size={15} className="text-stone-400 flex-shrink-0" />
+          <span className="text-stone-400">{t("settingsDeployTime")}:</span>
+          <span className="font-medium text-stone-700">{deployTime ? formatDeploy(deployTime.date) : "—"}</span>
+        </div>
+        {deployTime?.source === "lastModified" && (
+          <p className="text-[11px] text-stone-400 mt-2 leading-relaxed">{t("settingsDeployTimeNote")}</p>
+        )}
       </div>
     </div>
   );
