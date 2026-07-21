@@ -206,6 +206,17 @@ const DAYS_ZH = ["週日", "週一", "週二", "週三", "週四", "週五", "�
 const DAYS_EN = ["Sun", "Mon", "Tue", "Wed", "Thu", "Fri", "Sat"];
 const MONTHS_EN = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
 
+// Booking outcome status — admin-settable, shown to everyone who can see
+// the booking (calendar cells, booking modal, booking list). "" = not set,
+// i.e. the appointment hasn't happened yet or nothing unusual occurred.
+const BOOKING_STATUS_OPTIONS = [
+  { id: "completed", labelZh: "已完成", labelEn: "Completed", chip: "bg-green-100 text-green-700", dot: "bg-green-500", cellBg: "bg-green-50", cellBorder: "border-green-400" },
+  { id: "no_show", labelZh: "未到（No Show）", labelEn: "No Show", chip: "bg-red-100 text-red-700", dot: "bg-red-500", cellBg: "bg-red-50", cellBorder: "border-red-500" },
+  { id: "late", labelZh: "遲到", labelEn: "Late", chip: "bg-amber-100 text-amber-700", dot: "bg-amber-500", cellBg: "bg-amber-50", cellBorder: "border-amber-400" },
+  { id: "cancelled", labelZh: "已取消", labelEn: "Cancelled", chip: "bg-stone-200 text-stone-500", dot: "bg-stone-400", cellBg: "bg-stone-100", cellBorder: "border-stone-400" },
+];
+const bookingStatusMeta = (id) => BOOKING_STATUS_OPTIONS.find((s) => s.id === id) || null;
+
 /* ════════════════════════════════════════════════════
    TRANSLATIONS
 ════════════════════════════════════════════════════ */
@@ -325,6 +336,13 @@ const T = {
   time: { zh: "時間", en: "Time" },
   branch: { zh: "分店", en: "Branch" },
   notes: { zh: "備註", en: "Notes" },
+  bookingStatus: { zh: "到訪狀態", en: "Status" },
+  bookingStatusNotSet: { zh: "未設定", en: "Not Set" },
+  bookingStatusReason: { zh: "原因備註（選填）", en: "Reason (optional)" },
+  bookingStatusReasonPlaceholder: { zh: "例如：客戶臨時有事、忘記預約時間...", en: "e.g. customer had an emergency, forgot the time..." },
+  bookingStatusHint: { zh: "僅管理員可設定此狀態", en: "Only admins can set this status" },
+  pendingFilterStatus: { zh: "到訪狀態", en: "Status" },
+  pendingFilterStatusAll: { zh: "全部狀態", en: "All Statuses" },
   save: { zh: "儲存預約", en: "Save Appointment" },
   cancel: { zh: "取消", en: "Cancel" },
   close: { zh: "關閉", en: "Close" },
@@ -2491,29 +2509,45 @@ function CalendarPage({
                       const ids = b.serviceIds || (b.serviceId ? [b.serviceId] : []);
                       const svcs = ids.map((id) => serviceLookup(id)).filter(Boolean);
                       const firstCat = svcs[0] ? SERVICE_CATEGORIES.find((c) => c.id === svcs[0].cat) : null;
+                      const statusMeta = bookingStatusMeta(b.status);
+                      const isNoShow = b.status === "no_show";
+                      const isCancelled = b.status === "cancelled";
                       return (
                         <div
                           key={b.id}
                           onClick={() => openBookingItem(b)}
-                          className="bg-rose-50 hover:bg-rose-400 border-l-2 border-rose-400 rounded-lg px-2 py-1.5 mb-1.5 cursor-pointer transition group"
+                          className={`rounded-lg px-2 py-1.5 mb-1.5 cursor-pointer transition group border-l-2 ${
+                            statusMeta
+                              ? `${statusMeta.cellBg} ${statusMeta.cellBorder} hover:brightness-95`
+                              : "bg-rose-50 hover:bg-rose-400 border-rose-400"
+                          }`}
                         >
-                          <div className="flex items-center gap-1 text-[10px] font-medium text-stone-400 group-hover:text-rose-100">
-                            <Clock size={10} /> {b.time} · {b.staff || "—"}
+                          <div className={`flex items-center justify-between gap-1 text-[10px] font-medium ${statusMeta ? "text-stone-500" : "text-stone-400 group-hover:text-rose-100"}`}>
+                            <span className="flex items-center gap-1">
+                              <Clock size={10} /> {b.time} · {b.staff || "—"}
+                            </span>
+                            {statusMeta && (
+                              <span className={`text-[9px] font-bold px-1.5 py-0.5 rounded-full ${statusMeta.chip} flex-shrink-0`}>
+                                {lang === "zh" ? statusMeta.labelZh : statusMeta.labelEn}
+                              </span>
+                            )}
                           </div>
-                          <div className="text-xs font-semibold text-stone-800 group-hover:text-white">{b.name}</div>
+                          <div className={`text-xs font-semibold ${isNoShow || isCancelled ? "text-stone-500 line-through" : `text-stone-800 ${!statusMeta ? "group-hover:text-white" : ""}`}`}>
+                            {b.name}
+                          </div>
                           <div className="flex flex-wrap gap-1 mt-0.5">
                             {firstCat && (
-                              <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-full ${firstCat.chip} group-hover:bg-white/20 group-hover:text-white`}>
+                              <span className={`text-[9px] font-semibold px-1.5 py-0.5 rounded-full ${firstCat.chip} ${!statusMeta ? "group-hover:bg-white/20 group-hover:text-white" : ""}`}>
                                 {lang === "zh" ? firstCat.nameZh : firstCat.nameEn}
                               </span>
                             )}
-                            <span className="text-[10px] text-stone-500 group-hover:text-rose-50 truncate">
+                            <span className={`text-[10px] truncate ${statusMeta ? "text-stone-500" : "text-stone-500 group-hover:text-rose-50"}`}>
                               {svcs.length > 0
                                 ? svcs.map((s) => lang === "zh" ? s.nameZh : s.nameEn).join(", ")
                                 : "—"}
                             </span>
                             {svcs.length > 1 && (
-                              <span className="text-[9px] text-stone-400 group-hover:text-rose-100">+{svcs.length - 1}</span>
+                              <span className={`text-[9px] ${statusMeta ? "text-stone-400" : "text-stone-400 group-hover:text-rose-100"}`}>+{svcs.length - 1}</span>
                             )}
                           </div>
                         </div>
@@ -2596,6 +2630,17 @@ function BookingModal({ t, lang, user, mode, data, services, onClose, onSave, on
 
         {readOnly ? (
           <div className="px-6 py-4 space-y-0">
+            {form.status && (
+              <div className="flex gap-3 py-2.5 border-b border-stone-100">
+                <span className="text-xs font-semibold text-stone-400 w-24 flex-shrink-0">{t("bookingStatus")}</span>
+                <div className="flex items-center gap-2 flex-wrap">
+                  <span className={`text-xs font-semibold px-2.5 py-1 rounded-full ${bookingStatusMeta(form.status)?.chip}`}>
+                    {lang === "zh" ? bookingStatusMeta(form.status)?.labelZh : bookingStatusMeta(form.status)?.labelEn}
+                  </span>
+                  {form.statusNote && <span className="text-xs text-stone-500">{form.statusNote}</span>}
+                </div>
+              </div>
+            )}
             <DetailRow label={t("customerName")} value={form.name} />
             <DetailRow label={t("phone")} value={form.phone || "—"} />
             <div className="flex gap-3 py-2.5 border-b border-stone-100">
@@ -2609,6 +2654,32 @@ function BookingModal({ t, lang, user, mode, data, services, onClose, onSave, on
           </div>
         ) : (
           <div className="px-6 py-4 grid sm:grid-cols-2 gap-4">
+            {mode === "edit" && user.role === "admin" && (
+              <Field label={t("bookingStatus")} full>
+                <div className="flex items-center gap-1.5 flex-wrap">
+                  <button
+                    type="button" onClick={() => set("status", "")}
+                    className={`text-xs font-semibold px-3 py-1.5 rounded-full border transition ${!form.status ? "bg-stone-800 text-white border-stone-800" : "border-stone-200 text-stone-500 hover:border-rose-300"}`}
+                  >
+                    {t("bookingStatusNotSet")}
+                  </button>
+                  {BOOKING_STATUS_OPTIONS.map((opt) => (
+                    <button
+                      key={opt.id} type="button" onClick={() => set("status", opt.id)}
+                      className={`text-xs font-semibold px-3 py-1.5 rounded-full border transition ${form.status === opt.id ? `${opt.chip} border-transparent ring-2 ring-offset-1 ring-stone-300` : "border-stone-200 text-stone-500 hover:border-rose-300"}`}
+                    >
+                      {lang === "zh" ? opt.labelZh : opt.labelEn}
+                    </button>
+                  ))}
+                </div>
+                {form.status && (
+                  <input
+                    value={form.statusNote || ""} onChange={(e) => set("statusNote", e.target.value)}
+                    className="input mt-2" placeholder={t("bookingStatusReasonPlaceholder")}
+                  />
+                )}
+              </Field>
+            )}
             <Field label={`${t("customerName")} *`}>
               <input value={form.name} onChange={(e) => set("name", e.target.value)} className="input" placeholder="e.g. Maria Santos" />
             </Field>
@@ -3122,6 +3193,7 @@ function PendingPage({ t, lang, services, bookings, isAdmin }) {
   const [sortOldFirst, setSortOldFirst] = useState(false);
   const [onlyPhone, setOnlyPhone] = useState(false);
   const [onlySocial, setOnlySocial] = useState(false);
+  const [statusFilter, setStatusFilter] = useState("");
   const [showMemberPanel, setShowMemberPanel] = useState(false);
 
   const submittedMs = (b) => b.submittedAt?.toDate?.()?.getTime?.() ?? 0;
@@ -3139,11 +3211,12 @@ function PendingPage({ t, lang, services, bookings, isAdmin }) {
       if (rangeEnd) list = list.filter((b) => (b.date || "") <= rangeEnd);
       if (onlyPhone) list = list.filter((b) => (b.phone || "").trim());
       if (onlySocial) list = list.filter((b) => (b.social || "").trim());
+      if (statusFilter) list = list.filter((b) => (b.status || "") === statusFilter);
     }
     const sorted = [...list].sort((a, b) => submittedMs(b) - submittedMs(a));
     if (isAdmin && sortOldFirst) sorted.reverse();
     return sorted;
-  }, [bookings, isAdmin, rangeStart, rangeEnd, onlyPhone, onlySocial, sortOldFirst]);
+  }, [bookings, isAdmin, rangeStart, rangeEnd, onlyPhone, onlySocial, statusFilter, sortOldFirst]);
 
   // Potential-member roster: dedupe filtered bookings by phone (preferred)
   // or social handle, keeping only entries that have at least one contact
@@ -3260,6 +3333,13 @@ function PendingPage({ t, lang, services, bookings, isAdmin }) {
               <input type="checkbox" checked={onlySocial} onChange={(e) => setOnlySocial(e.target.checked)} className="w-3.5 h-3.5 accent-rose-400" />
               {t("pendingOnlySocial")}
             </label>
+            <select value={statusFilter} onChange={(e) => setStatusFilter(e.target.value)}
+              className="text-xs font-medium px-2.5 py-1.5 rounded-lg border border-stone-200 bg-white text-stone-600 outline-none focus:border-rose-300">
+              <option value="">{t("pendingFilterStatusAll")}</option>
+              {BOOKING_STATUS_OPTIONS.map((opt) => (
+                <option key={opt.id} value={opt.id}>{lang === "zh" ? opt.labelZh : opt.labelEn}</option>
+              ))}
+            </select>
             <span className="text-xs text-stone-400 ml-auto">
               {t("pendingResultCount")}: <b className="text-stone-600">{visible.length}</b>
             </span>
@@ -3321,17 +3401,27 @@ function PendingPage({ t, lang, services, bookings, isAdmin }) {
         </div>
       ) : (
         <div className="space-y-3">
-          {visible.map((b) => (
-            <div key={b.id} className="bg-white border border-stone-200 rounded-xl p-4 shadow-sm">
+          {visible.map((b) => {
+            const statusMeta = bookingStatusMeta(b.status);
+            return (
+            <div key={b.id} className={`bg-white border rounded-xl p-4 shadow-sm ${statusMeta ? `border-l-4 ${statusMeta.cellBorder} ${statusMeta.cellBg}` : "border-stone-200"}`}>
               <div className="flex items-start justify-between gap-3 flex-wrap">
                 <div className="min-w-0 flex-1">
-                  {/* Name + source badge */}
+                  {/* Name + source badge + status badge */}
                   <div className="flex items-center gap-2 flex-wrap mb-0.5">
-                    <span className="font-semibold text-stone-800 text-sm">{b.name}</span>
+                    <span className={`font-semibold text-sm ${b.status === "no_show" || b.status === "cancelled" ? "text-stone-500 line-through" : "text-stone-800"}`}>{b.name}</span>
                     <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${sourceBadge(b.source)}`}>
                       {sourceLabel(b.source)}
                     </span>
+                    {statusMeta && (
+                      <span className={`text-[10px] font-semibold px-2 py-0.5 rounded-full ${statusMeta.chip}`}>
+                        {lang === "zh" ? statusMeta.labelZh : statusMeta.labelEn}
+                      </span>
+                    )}
                   </div>
+                  {b.statusNote && (
+                    <div className="text-[11px] text-stone-500 italic mb-1">{b.statusNote}</div>
+                  )}
 
                   {/* Date/time & branch */}
                   <div className="text-xs text-stone-500 mb-2">
@@ -3369,7 +3459,8 @@ function PendingPage({ t, lang, services, bookings, isAdmin }) {
                 </div>
               </div>
             </div>
-          ))}
+            );
+          })}
         </div>
       )}
     </div>
