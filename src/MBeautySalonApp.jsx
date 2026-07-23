@@ -11,7 +11,7 @@ import {
 import { initializeApp } from "firebase/app";
 import {
   getFirestore, collection, addDoc, getDocs, getDoc, query, orderBy, limit, where, serverTimestamp,
-  doc, setDoc, updateDoc, deleteDoc, onSnapshot, writeBatch,
+  doc, setDoc, updateDoc, deleteDoc, onSnapshot, writeBatch, runTransaction,
 } from "firebase/firestore";
 
 /* ════════════════════════════════════════════════════
@@ -336,6 +336,14 @@ const T = {
   time: { zh: "時間", en: "Time" },
   branch: { zh: "分店", en: "Branch" },
   notes: { zh: "備註", en: "Notes" },
+  dedupeServices: { zh: "清除重複品項", en: "Remove Duplicates" },
+  noDuplicatesFound: { zh: "沒有發現重複品項", en: "No duplicates found" },
+  selectedServices: { zh: "目前已選擇", en: "Currently Selected" },
+  noServicesSelectedYet: { zh: "尚未選擇任何項目", en: "No items selected yet" },
+  confirmBookingTitle: { zh: "確認預約內容", en: "Confirm Booking" },
+  confirmBookingDesc: { zh: "請再次確認以下內容無誤後送出。", en: "Please double-check everything below before submitting." },
+  confirmBookingBack: { zh: "返回修改", en: "Back to Edit" },
+  confirmBookingSubmit: { zh: "確認送出", en: "Confirm & Submit" },
   bookingStatus: { zh: "到訪狀態", en: "Status" },
   bookingStatusNotSet: { zh: "未設定", en: "Not Set" },
   bookingStatusReason: { zh: "原因備註（選填）", en: "Reason (optional)" },
@@ -741,23 +749,38 @@ function AppInner() {
   }, []);
 
   // services — collection "services" (seed with INITIAL_SERVICES if empty)
+  //
+  // BUG FIX: the old version checked `snap.empty` and then wrote the seed
+  // batch directly. If this effect ran twice in a short window (React 18
+  // StrictMode double-invokes effects in dev; the same can also happen if
+  // two browser tabs/devices load the empty collection at nearly the same
+  // moment), BOTH listeners would see "empty" before either write finished,
+  // so BOTH would write the full INITIAL_SERVICES batch — creating an exact
+  // duplicate of every service, which is what showed up as repeated items
+  // in the booking checklist. Fixed by gating the write behind a Firestore
+  // transaction on a fixed-ID sentinel doc: transactions serialize
+  // concurrent attempts, so only one of them can ever win the race.
   useEffect(() => {
+    const trySeedServices = async () => {
+      const sentinelRef = doc(db, "settings", "servicesSeeded");
+      try {
+        await runTransaction(db, async (tx) => {
+          const sentinelSnap = await tx.get(sentinelRef);
+          if (sentinelSnap.exists()) return; // another caller already seeded (or is seeding)
+          tx.set(sentinelRef, { seededAt: serverTimestamp() });
+          INITIAL_SERVICES.forEach((s) => {
+            const { id, ...rest } = s;
+            tx.set(doc(collection(db, "services")), rest);
+          });
+        });
+      } catch (err) {
+        console.error("services seed error:", err);
+      }
+    };
     const unsub = onSnapshot(
       collection(db, "services"),
-      async (snap) => {
-        if (snap.empty) {
-          try {
-            const batch = writeBatch(db);
-            INITIAL_SERVICES.forEach((s) => {
-              const { id, ...rest } = s;
-              batch.set(doc(collection(db, "services")), rest);
-            });
-            await batch.commit();
-          } catch (err) {
-            console.error("services seed error:", err);
-          }
-          return; // onSnapshot will fire again once seeded
-        }
+      (snap) => {
+        if (snap.empty) { trySeedServices(); return; } // onSnapshot fires again once seeded
         setServices(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
       },
       (err) => console.error("services sync error:", err)
@@ -855,18 +878,26 @@ function AppInner() {
   }, []);
 
   // accounts — collection "accounts" (seed DEFAULT_ADMIN if empty)
+  // Same race-condition fix as the services seed above — transaction-gated
+  // via a sentinel doc so DEFAULT_ADMIN can never be created twice.
   useEffect(() => {
+    const trySeedAccounts = async () => {
+      const sentinelRef = doc(db, "settings", "accountsSeeded");
+      try {
+        await runTransaction(db, async (tx) => {
+          const sentinelSnap = await tx.get(sentinelRef);
+          if (sentinelSnap.exists()) return;
+          tx.set(sentinelRef, { seededAt: serverTimestamp() });
+          tx.set(doc(collection(db, "accounts")), DEFAULT_ADMIN);
+        });
+      } catch (err) {
+        console.error("accounts seed error:", err);
+      }
+    };
     const unsub = onSnapshot(
       collection(db, "accounts"),
-      async (snap) => {
-        if (snap.empty) {
-          try {
-            await addDoc(collection(db, "accounts"), DEFAULT_ADMIN);
-          } catch (err) {
-            console.error("accounts seed error:", err);
-          }
-          return;
-        }
+      (snap) => {
+        if (snap.empty) { trySeedAccounts(); return; }
         setAccounts(snap.docs.map((d) => ({ id: d.id, ...d.data() })));
       },
       (err) => console.error("accounts sync error:", err)
@@ -1052,6 +1083,41 @@ function AppInner() {
       await updateDoc(doc(db, "services", s.id), { hidden: !s.hidden });
     } catch (err) {
       console.error("toggleServiceHidden error:", err);
+      showToast(t("syncError"), "warn");
+    }
+  };
+
+  // One-time cleanup for the race-condition duplicate-seed bug described
+  // above: groups services by (category + zh name + en name + price) and
+  // deletes every extra copy beyond the first, keeping the oldest doc.
+  const dedupeServices = async () => {
+    const seen = new Map();
+    const toDelete = [];
+    [...services]
+      .sort((a, b) => (a.id || "").localeCompare(b.id || "")) // stable order so "first" is deterministic
+      .forEach((s) => {
+        const key = [s.cat, s.nameZh, s.nameEn, s.priceZh, s.priceEn].join("||");
+        if (seen.has(key)) toDelete.push(s.id);
+        else seen.set(key, s.id);
+      });
+    if (!toDelete.length) {
+      showToast(t("noDuplicatesFound"), "success");
+      return;
+    }
+    if (!window.confirm(lang === "zh" ? `找到 ${toDelete.length} 筆重複品項，確定要刪除嗎？` : `Found ${toDelete.length} duplicate item(s). Delete them?`)) return;
+    try {
+      for (let i = 0; i < toDelete.length; i += 400) {
+        const chunk = toDelete.slice(i, i + 400);
+        const batch = writeBatch(db);
+        chunk.forEach((id) => batch.delete(doc(db, "services", id)));
+        await batch.commit();
+      }
+      showToast(
+        lang === "zh" ? `已移除 ${toDelete.length} 筆重複品項` : `Removed ${toDelete.length} duplicate item(s)`,
+        "success"
+      );
+    } catch (err) {
+      console.error("dedupeServices error:", err);
       showToast(t("syncError"), "warn");
     }
   };
@@ -1787,6 +1853,7 @@ function AppInner() {
               services={services} gallery={galleryAll}
               openNewService={openNewService} openEditService={openEditService} deleteService={deleteService} toggleServiceHidden={toggleServiceHidden}
               handleGalleryUpload={handleGalleryUpload} deleteGalleryImg={deleteGalleryImg}
+              onDedupe={dedupeServices}
             />
           )}
           {page === "contact" && (
@@ -2206,13 +2273,21 @@ function GuestBookingForm({ t, lang, services, branchInfo, onSubmitted }) {
   });
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
+  const [showConfirm, setShowConfirm] = useState(false);
   const set = (k, v) => setForm((f) => ({ ...f, [k]: v }));
 
-  const handleSubmit = async () => {
+  const handleSubmitClick = () => {
     if (!form.name.trim() || !form.phone.trim() || !form.date || !form.time) {
       setError(t("guestFillRequired")); return;
     }
+    if (!form.serviceIds || form.serviceIds.length === 0) {
+      setError(t("guestFillRequired")); return;
+    }
     setError("");
+    setShowConfirm(true);
+  };
+
+  const handleConfirmSubmit = async () => {
     setSubmitting(true);
     try {
       await addDoc(collection(db, "bookings"), {
@@ -2222,10 +2297,12 @@ function GuestBookingForm({ t, lang, services, branchInfo, onSubmitted }) {
         source: "guest",
         serviceIds: form.serviceIds || [],
       });
+      setShowConfirm(false);
       onSubmitted();
     } catch (err) {
       console.error("guest submit error:", err);
       setError(t("guestSubmitError"));
+      setShowConfirm(false);
     } finally {
       setSubmitting(false);
     }
@@ -2233,6 +2310,8 @@ function GuestBookingForm({ t, lang, services, branchInfo, onSubmitted }) {
 
   const contactOptions = ["FB", "IG", "LINE", lang==="zh" ? "電話" : "Phone number"];
   const paymentOptions = ["Cash", "GCash", "Credit Card", lang==="zh" ? "禮券 / Gift Check" : "Voucher / Gift Check", lang==="zh" ? "其他" : "Other"];
+  const selectedBranchInfo = branchInfo.find((b) => String(b.id) === form.branch);
+  const branchLabel = selectedBranchInfo ? `${lang === "zh" ? selectedBranchInfo.nameZh : selectedBranchInfo.nameEn} (${selectedBranchInfo.sub})` : "";
 
   return (
     <div className="bg-white rounded-xl border border-stone-200 shadow-sm p-6">
@@ -2294,15 +2373,25 @@ function GuestBookingForm({ t, lang, services, branchInfo, onSubmitted }) {
               onChange={(ids) => set("serviceIds", ids)}
             />
           </div>
+          <SelectedServicesSummary t={t} lang={lang} services={services} selectedIds={form.serviceIds} />
         </GField>
       </div>
 
       {error && <div className="text-xs text-rose-500 mt-3">{error}</div>}
 
-      <button type="button" onClick={handleSubmit} disabled={submitting}
+      <button type="button" onClick={handleSubmitClick} disabled={submitting}
         className="mt-5 w-full bg-rose-400 hover:bg-rose-500 disabled:opacity-60 text-white font-medium text-sm py-3 rounded-lg transition">
         {submitting ? t("guestSubmitting") : t("guestSubmit")}
       </button>
+
+      {showConfirm && (
+        <BookingConfirmDialog
+          t={t} lang={lang} form={form} services={services} branchLabel={branchLabel}
+          submitting={submitting}
+          onCancel={() => setShowConfirm(false)}
+          onConfirm={handleConfirmSubmit}
+        />
+      )}
 
       <style>{`
         .ginput { width:100%; padding:9px 12px; border:1px solid #E7E5E4; border-radius:8px; font-size:13px; background:#FAFAF9; outline:none; transition:border-color .15s; }
@@ -2317,6 +2406,99 @@ function GField({ label, children, full }) {
     <div className={`flex flex-col gap-1.5${full ? " sm:col-span-2" : ""}`}>
       <label className="text-xs font-medium text-stone-500">{label}</label>
       {children}
+    </div>
+  );
+}
+
+/* ────────────────────────────────────────────────────
+   SELECTED SERVICES SUMMARY
+   Shown right under the checkbox picker in both booking forms
+   so the person can see what they've checked so far without
+   scrolling back up through a long category list.
+──────────────────────────────────────────────────── */
+function SelectedServicesSummary({ t, lang, services, selectedIds = [] }) {
+  const selected = selectedIds
+    .map((id) => services.find((s) => s.id === id || s.id === String(id)))
+    .filter(Boolean);
+
+  if (!selected.length) {
+    return <div className="text-xs text-stone-400 italic mt-2">{t("noServicesSelectedYet")}</div>;
+  }
+  return (
+    <div className="mt-2">
+      <div className="text-[11px] font-medium text-stone-400 mb-1.5">
+        {t("selectedServices")} ({selected.length})
+      </div>
+      <div className="flex flex-wrap gap-1.5">
+        {selected.map((s) => {
+          const cat = SERVICE_CATEGORIES.find((c) => c.id === s.cat);
+          return (
+            <span key={s.id} className={`text-xs font-medium px-2.5 py-1 rounded-full flex items-center gap-1.5 ${cat?.chip || "bg-stone-100 text-stone-500"}`}>
+              {lang === "zh" ? s.nameZh : s.nameEn}
+              <span className="opacity-70">{lang === "zh" ? s.priceZh : s.priceEn}</span>
+            </span>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+/* ────────────────────────────────────────────────────
+   BOOKING CONFIRM DIALOG
+   One last look before the booking is actually written to
+   Firestore — used by both the guest form and the internal
+   new/edit booking modal.
+──────────────────────────────────────────────────── */
+function BookingConfirmDialog({ t, lang, form, services, branchLabel, onConfirm, onCancel, submitting }) {
+  const selected = (form.serviceIds || [])
+    .map((id) => services.find((s) => s.id === id || s.id === String(id)))
+    .filter(Boolean);
+
+  return (
+    <div className="fixed inset-0 bg-black/40 z-[60] flex items-center justify-center p-4" onClick={onCancel}>
+      <div className="bg-white rounded-2xl w-full max-w-md max-h-[90vh] overflow-y-auto shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="px-6 py-4 border-b border-stone-100">
+          <h2 className="font-display text-xl font-light text-stone-800">{t("confirmBookingTitle")}</h2>
+          <p className="text-xs text-stone-400 mt-1">{t("confirmBookingDesc")}</p>
+        </div>
+        <div className="px-6 py-4 space-y-2.5">
+          <div className="text-sm"><span className="text-stone-400">{t("customerName")}: </span><b className="text-stone-800">{form.name || "—"}</b></div>
+          <div className="text-sm"><span className="text-stone-400">{t("date")} / {t("time")}: </span><b className="text-stone-800">{form.date || "—"} {form.time || ""}</b></div>
+          {branchLabel && <div className="text-sm"><span className="text-stone-400">{t("branch")}: </span><b className="text-stone-800">{branchLabel}</b></div>}
+          {form.staff && <div className="text-sm"><span className="text-stone-400">{t("stylist")}: </span><b className="text-stone-800">{form.staff}</b></div>}
+          <div>
+            <div className="text-xs text-stone-400 mb-1.5 mt-2">{t("service")} ({selected.length})</div>
+            {selected.length === 0 ? (
+              <div className="text-xs text-rose-500">{t("noServicesSelectedYet")}</div>
+            ) : (
+              <div className="flex flex-wrap gap-1.5">
+                {selected.map((s) => {
+                  const cat = SERVICE_CATEGORIES.find((c) => c.id === s.cat);
+                  return (
+                    <span key={s.id} className={`text-xs font-medium px-2.5 py-1 rounded-full ${cat?.chip || "bg-stone-100 text-stone-500"}`}>
+                      {lang === "zh" ? s.nameZh : s.nameEn}
+                    </span>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+          {form.note && (
+            <div className="text-sm"><span className="text-stone-400">{t("notes")}: </span>{form.note}</div>
+          )}
+        </div>
+        <div className="flex items-center gap-2 px-6 py-4 border-t border-stone-100">
+          <button type="button" onClick={onCancel}
+            className="text-sm font-medium text-stone-500 border border-stone-200 hover:border-stone-300 px-4 py-2 rounded-lg transition ml-auto">
+            {t("confirmBookingBack")}
+          </button>
+          <button type="button" onClick={onConfirm} disabled={submitting}
+            className="text-sm font-medium bg-rose-400 hover:bg-rose-500 disabled:opacity-60 text-white px-4 py-2 rounded-lg transition">
+            {submitting ? t("guestSubmitting") : t("confirmBookingSubmit")}
+          </button>
+        </div>
+      </div>
     </div>
   );
 }
@@ -2578,8 +2760,25 @@ function BookingModal({ t, lang, user, mode, data, services, onClose, onSave, on
   const readOnly = mode === "view";
   const [showExport, setShowExport] = useState(false);
   const [copied, setCopied] = useState(false);
+  const [showConfirm, setShowConfirm] = useState(false);
+  const [saving, setSaving] = useState(false);
 
   const BRANCH_LABELS = { 0: "Lahug Branch (Salinas Premier)", 1: "Emall Branch (2nd Floor)" };
+
+  const handleSaveClick = () => {
+    if (!form.name?.trim() || !form.serviceIds?.length || !form.date || !form.time) {
+      setShowConfirm(false);
+      onSave(form); // let the existing required-field toast in AppInner's saveBooking handle it
+      return;
+    }
+    setShowConfirm(true);
+  };
+  const handleConfirmSave = async () => {
+    setSaving(true);
+    await onSave(form);
+    setSaving(false);
+    setShowConfirm(false);
+  };
 
   const buildExportText = () => {
     const svcNames = (form.serviceIds || [])
@@ -2713,6 +2912,7 @@ function BookingModal({ t, lang, user, mode, data, services, onClose, onSave, on
                   onChange={(ids) => set("serviceIds", ids)}
                 />
               </div>
+              <SelectedServicesSummary t={t} lang={lang} services={services} selectedIds={form.serviceIds || []} />
             </Field>
           </div>
         )}
@@ -2764,11 +2964,21 @@ function BookingModal({ t, lang, user, mode, data, services, onClose, onSave, on
             {readOnly ? t("close") : t("cancel")}
           </button>
           {!readOnly && (
-            <button onClick={() => onSave(form)} className="text-sm font-medium bg-rose-400 hover:bg-rose-500 text-white px-4 py-2 rounded-lg transition">
+            <button onClick={handleSaveClick} className="text-sm font-medium bg-rose-400 hover:bg-rose-500 text-white px-4 py-2 rounded-lg transition">
               {t("save")}
             </button>
           )}
         </div>
+
+        {showConfirm && (
+          <BookingConfirmDialog
+            t={t} lang={lang} form={form} services={services}
+            branchLabel={BRANCH_LABELS[form.branch] ?? ""}
+            submitting={saving}
+            onCancel={() => setShowConfirm(false)}
+            onConfirm={handleConfirmSave}
+          />
+        )}
 
         <style>{`.input { padding: 9px 12px; border: 1px solid #E7E5E4; border-radius: 8px; font-size: 13px; background: #FAFAF9; outline: none; width: 100%; transition: all .15s; } .input:focus { border-color: #FB7185; background: white; }`}</style>
       </div>
@@ -2797,7 +3007,7 @@ function DetailRow({ label, value }) {
    SERVICES PAGE
 ════════════════════════════════════════════════════ */
 
-function ServicesPage({ t, lang, user, services, gallery, openNewService, openEditService, deleteService, toggleServiceHidden, handleGalleryUpload, deleteGalleryImg }) {
+function ServicesPage({ t, lang, user, services, gallery, openNewService, openEditService, deleteService, toggleServiceHidden, handleGalleryUpload, deleteGalleryImg, onDedupe }) {
   const isAdmin = user.role === "admin";
   return (
     <div>
@@ -2805,6 +3015,12 @@ function ServicesPage({ t, lang, user, services, gallery, openNewService, openEd
         <h1 className="font-display text-2xl md:text-3xl font-light text-stone-800">
           {lang === "zh" ? <>本店<span className="text-rose-400">服務</span></> : <>Our <span className="text-rose-400">Services</span></>}
         </h1>
+        {isAdmin && onDedupe && (
+          <button type="button" onClick={onDedupe}
+            className="flex items-center gap-1.5 text-xs font-medium border border-stone-200 hover:border-amber-300 text-stone-500 hover:text-amber-600 px-3 py-1.5 rounded-lg transition">
+            <RefreshCw size={13} /> {t("dedupeServices")}
+          </button>
+        )}
       </div>
 
       {/* Gallery */}
