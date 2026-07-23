@@ -5,7 +5,8 @@ import {
   Pencil, ChevronLeft, ChevronRight, Image as ImageIcon, Clock,
   Eye, EyeOff, Lock, User, Users, Menu, Phone, Database, Send, RefreshCw, ClipboardCopy, FileText,
   ShoppingCart, Receipt, DollarSign, TrendingUp, Settings, ChevronDown, ChevronUp, BarChart2,
-  Package, Search, Upload, CheckSquare, Square, CheckCircle2, ClipboardList, ArrowLeft, Undo2
+  Package, Search, Upload, CheckSquare, Square, CheckCircle2, ClipboardList, ArrowLeft, Undo2,
+  AlertTriangle, GripVertical
 } from "lucide-react";
 
 import { initializeApp } from "firebase/app";
@@ -217,6 +218,17 @@ const BOOKING_STATUS_OPTIONS = [
 ];
 const bookingStatusMeta = (id) => BOOKING_STATUS_OPTIONS.find((s) => s.id === id) || null;
 
+// Service display order — admin-adjustable via drag & drop in ServicesPage.
+// Falls back to numeric id (INITIAL_SERVICES' insertion order) for any
+// service that doesn't have an explicit `order` value yet, so nothing
+// looks unsorted before the admin has reordered anything.
+const serviceOrderVal = (s) => {
+  if (typeof s.order === "number") return s.order;
+  const n = Number(s.id);
+  return Number.isNaN(n) ? 0 : n;
+};
+const sortServicesByOrder = (list) => [...list].sort((a, b) => serviceOrderVal(a) - serviceOrderVal(b));
+
 /* ════════════════════════════════════════════════════
    TRANSLATIONS
 ════════════════════════════════════════════════════ */
@@ -338,6 +350,15 @@ const T = {
   notes: { zh: "備註", en: "Notes" },
   dedupeServices: { zh: "清除重複品項", en: "Remove Duplicates" },
   noDuplicatesFound: { zh: "沒有發現重複品項", en: "No duplicates found" },
+  duplicateWarningTitle: { zh: "發現重複品項", en: "Duplicate Items Found" },
+  serviceReorderMode: { zh: "排序模式", en: "Reorder Mode" },
+  serviceReorderHint: { zh: "拖曳項目調整顯示順序，調整完成後點「儲存排序」確認並套用。", en: "Drag items to reorder them. Click \"Save Order\" when you're done to review and apply." },
+  serviceCancelReorder: { zh: "取消排序", en: "Cancel Reorder" },
+  serviceSaveOrder: { zh: "儲存排序", en: "Save Order" },
+  serviceReorderConfirmTitle: { zh: "確認新的顯示順序", en: "Confirm New Order" },
+  serviceReorderConfirmDesc: { zh: "確認後將立即套用，遊客與內部畫面看到的服務項目順序都會依此更新。", en: "This applies immediately once confirmed — both the guest-facing and internal views will follow this order." },
+  serviceReorderConfirmSave: { zh: "確認儲存", en: "Confirm & Save" },
+  serviceOrderSaved: { zh: "排序已儲存", en: "Order saved" },
   selectedServices: { zh: "目前已選擇", en: "Currently Selected" },
   noServicesSelectedYet: { zh: "尚未選擇任何項目", en: "No items selected yet" },
   confirmBookingTitle: { zh: "確認預約內容", en: "Confirm Booking" },
@@ -1122,6 +1143,26 @@ function AppInner() {
     }
   };
 
+  // Persist a new display order for services. `updates` = [{ id, order }, ...].
+  // This is what both the internal Services page AND the guest-facing
+  // checklist read from (via serviceOrderVal/sortServicesByOrder), so
+  // saving here immediately changes what guests see too.
+  const saveServiceOrder = async (updates) => {
+    if (!updates || !updates.length) return;
+    try {
+      for (let i = 0; i < updates.length; i += 400) {
+        const chunk = updates.slice(i, i + 400);
+        const batch = writeBatch(db);
+        chunk.forEach(({ id, order }) => batch.update(doc(db, "services", id), { order }));
+        await batch.commit();
+      }
+      showToast(t("serviceOrderSaved"), "success");
+    } catch (err) {
+      console.error("saveServiceOrder error:", err);
+      showToast(t("syncError"), "warn");
+    }
+  };
+
   /* ───── GALLERY HANDLERS ───── */
   const MAX_IMAGE_BYTES = 700 * 1024; // ~700KB safety margin under Firestore's 1MB doc limit
   const handleGalleryUpload = async (e) => {
@@ -1854,6 +1895,7 @@ function AppInner() {
               openNewService={openNewService} openEditService={openEditService} deleteService={deleteService} toggleServiceHidden={toggleServiceHidden}
               handleGalleryUpload={handleGalleryUpload} deleteGalleryImg={deleteGalleryImg}
               onDedupe={dedupeServices}
+              onSaveOrder={saveServiceOrder}
             />
           )}
           {page === "contact" && (
@@ -2226,7 +2268,7 @@ function ServiceCheckboxPicker({ services, lang, selected = [], onChange, readOn
   return (
     <div className="space-y-3">
       {SERVICE_CATEGORIES.map((cat) => {
-        const items = visibleServices.filter((s) => s.cat === cat.id);
+        const items = sortServicesByOrder(visibleServices.filter((s) => s.cat === cat.id));
         if (!items.length) return null;
         return (
           <div key={cat.id}>
@@ -3007,21 +3049,122 @@ function DetailRow({ label, value }) {
    SERVICES PAGE
 ════════════════════════════════════════════════════ */
 
-function ServicesPage({ t, lang, user, services, gallery, openNewService, openEditService, deleteService, toggleServiceHidden, handleGalleryUpload, deleteGalleryImg, onDedupe }) {
+function ServicesPage({
+  t, lang, user, services, gallery,
+  openNewService, openEditService, deleteService, toggleServiceHidden,
+  handleGalleryUpload, deleteGalleryImg, onDedupe, onSaveOrder,
+}) {
   const isAdmin = user.role === "admin";
+
+  /* ── Automatic duplicate detection — always-on, no button needed ── */
+  const duplicateGroups = useMemo(() => {
+    const map = new Map();
+    services.forEach((s) => {
+      const key = [s.cat, s.nameZh, s.nameEn, s.priceZh, s.priceEn].join("||");
+      if (!map.has(key)) map.set(key, []);
+      map.get(key).push(s);
+    });
+    return [...map.values()].filter((g) => g.length > 1);
+  }, [services]);
+
+  /* ── Reorder mode ── */
+  const [reorderMode, setReorderMode] = useState(false);
+  const [draftByCat, setDraftByCat] = useState({});
+  const [showReorderConfirm, setShowReorderConfirm] = useState(false);
+  const [savingOrder, setSavingOrder] = useState(false);
+
+  const enterReorderMode = () => {
+    const draft = {};
+    SERVICE_CATEGORIES.forEach((cat) => {
+      draft[cat.id] = sortServicesByOrder(services.filter((s) => s.cat === cat.id));
+    });
+    setDraftByCat(draft);
+    setReorderMode(true);
+  };
+  const cancelReorderMode = () => {
+    setReorderMode(false);
+    setDraftByCat({});
+  };
+  const handleCategoryReorder = (catId, newList) => {
+    setDraftByCat((prev) => ({ ...prev, [catId]: newList }));
+  };
+  const openReorderConfirm = () => setShowReorderConfirm(true);
+  const confirmSaveOrder = async () => {
+    setSavingOrder(true);
+    const updates = [];
+    Object.entries(draftByCat).forEach(([, list]) => {
+      list.forEach((s, idx) => updates.push({ id: s.id, order: idx * 10 }));
+    });
+    await onSaveOrder(updates);
+    setSavingOrder(false);
+    setShowReorderConfirm(false);
+    setReorderMode(false);
+    setDraftByCat({});
+  };
+
   return (
     <div>
       <div className="flex items-center justify-between mb-5 flex-wrap gap-3">
         <h1 className="font-display text-2xl md:text-3xl font-light text-stone-800">
           {lang === "zh" ? <>本店<span className="text-rose-400">服務</span></> : <>Our <span className="text-rose-400">Services</span></>}
         </h1>
-        {isAdmin && onDedupe && (
-          <button type="button" onClick={onDedupe}
-            className="flex items-center gap-1.5 text-xs font-medium border border-stone-200 hover:border-amber-300 text-stone-500 hover:text-amber-600 px-3 py-1.5 rounded-lg transition">
-            <RefreshCw size={13} /> {t("dedupeServices")}
-          </button>
+        {isAdmin && (
+          <div className="flex items-center gap-2 flex-wrap">
+            {onDedupe && (
+              <button type="button" onClick={onDedupe}
+                className="flex items-center gap-1.5 text-xs font-medium border border-stone-200 hover:border-amber-300 text-stone-500 hover:text-amber-600 px-3 py-1.5 rounded-lg transition">
+                <RefreshCw size={13} /> {t("dedupeServices")}
+              </button>
+            )}
+            {onSaveOrder && !reorderMode && (
+              <button type="button" onClick={enterReorderMode}
+                className="flex items-center gap-1.5 text-xs font-medium border border-stone-200 hover:border-rose-300 text-stone-600 hover:text-rose-500 px-3 py-1.5 rounded-lg transition">
+                <GripVertical size={13} /> {t("serviceReorderMode")}
+              </button>
+            )}
+            {reorderMode && (
+              <>
+                <button type="button" onClick={cancelReorderMode}
+                  className="text-xs font-medium text-stone-500 border border-stone-200 hover:border-stone-300 px-3 py-1.5 rounded-lg transition">
+                  {t("serviceCancelReorder")}
+                </button>
+                <button type="button" onClick={openReorderConfirm}
+                  className="flex items-center gap-1.5 text-xs font-semibold bg-rose-400 hover:bg-rose-500 text-white px-3 py-1.5 rounded-lg transition">
+                  <CheckCircle2 size={13} /> {t("serviceSaveOrder")}
+                </button>
+              </>
+            )}
+          </div>
         )}
       </div>
+
+      {/* Automatic duplicate-item warning — always visible when found */}
+      {isAdmin && duplicateGroups.length > 0 && (
+        <div className="bg-amber-50 border border-amber-200 rounded-xl p-4 mb-5">
+          <div className="flex items-center justify-between gap-3 flex-wrap mb-2">
+            <div className="flex items-center gap-2 text-amber-700 font-semibold text-sm">
+              <AlertTriangle size={16} /> {t("duplicateWarningTitle")} ({duplicateGroups.length})
+            </div>
+            {onDedupe && (
+              <button type="button" onClick={onDedupe}
+                className="text-xs font-semibold bg-amber-500 hover:bg-amber-600 text-white px-3 py-1.5 rounded-lg transition">
+                {t("dedupeServices")}
+              </button>
+            )}
+          </div>
+          <ul className="text-xs text-amber-700 space-y-1 list-disc list-inside">
+            {duplicateGroups.map((g, i) => (
+              <li key={i}>{lang === "zh" ? g[0].nameZh : g[0].nameEn} × {g.length}</li>
+            ))}
+          </ul>
+        </div>
+      )}
+
+      {reorderMode && (
+        <div className="text-xs text-rose-500 bg-rose-50 border border-rose-200 rounded-lg px-3 py-2 mb-4">
+          {t("serviceReorderHint")}
+        </div>
+      )}
 
       {/* Gallery */}
       <div className="bg-white border border-stone-200 rounded-xl p-5 mb-6 shadow-sm">
@@ -3059,24 +3202,50 @@ function ServicesPage({ t, lang, user, services, gallery, openNewService, openEd
           <ServiceList
             key={cat.id}
             category={cat}
-            services={services}
+            items={reorderMode ? (draftByCat[cat.id] || []) : sortServicesByOrder(services.filter((s) => s.cat === cat.id))}
             t={t} lang={lang} isAdmin={isAdmin}
+            reorderMode={reorderMode}
+            onReorder={(newList) => handleCategoryReorder(cat.id, newList)}
             onEdit={openEditService} onDelete={deleteService}
             onToggleHidden={toggleServiceHidden}
             onAdd={() => openNewService(cat.id)}
           />
         ))}
       </div>
+
+      {showReorderConfirm && (
+        <ServiceReorderConfirmDialog
+          t={t} lang={lang} draftByCat={draftByCat} saving={savingOrder}
+          onCancel={() => setShowReorderConfirm(false)}
+          onConfirm={confirmSaveOrder}
+        />
+      )}
     </div>
   );
 }
 
-function ServiceList({ category, services, t, lang, isAdmin, onEdit, onDelete, onToggleHidden, onAdd }) {
-  const allItems = services.filter((s) => s.cat === category.id);
-  // Non-admins only see visible items; admins see all with a dim on hidden ones
-  const items = isAdmin ? allItems : allItems.filter((s) => !s.hidden);
+function ServiceList({ category, items, t, lang, isAdmin, reorderMode, onReorder, onEdit, onDelete, onToggleHidden, onAdd }) {
+  // Non-admins (and normal, non-reorder admin view) only see visible items;
+  // admins in the regular view still see hidden ones (dimmed). In reorder
+  // mode we show everything, including hidden items, so drag order stays
+  // consistent regardless of visibility.
+  const allItems = items;
+  const visibleItems = isAdmin || reorderMode ? allItems : allItems.filter((s) => !s.hidden);
   const hiddenCount = allItems.filter((s) => s.hidden).length;
   const note = lang === "zh" ? category.noteZh : category.noteEn;
+
+  const [dragIndex, setDragIndex] = useState(null);
+  const [overIndex, setOverIndex] = useState(null);
+
+  const handleDrop = (dropIdx) => {
+    if (dragIndex === null || dragIndex === dropIdx) { setDragIndex(null); setOverIndex(null); return; }
+    const next = [...visibleItems];
+    const [moved] = next.splice(dragIndex, 1);
+    next.splice(dropIdx, 0, moved);
+    onReorder(next);
+    setDragIndex(null);
+    setOverIndex(null);
+  };
 
   return (
     <div className="bg-white border border-stone-200 rounded-xl p-5 shadow-sm">
@@ -3089,41 +3258,52 @@ function ServiceList({ category, services, t, lang, isAdmin, onEdit, onDelete, o
             </span>
           )}
         </div>
-        {isAdmin && (
+        {isAdmin && !reorderMode && (
           <button onClick={onAdd} className="flex items-center gap-1 text-xs font-medium text-rose-400 hover:text-rose-500 transition">
             <Plus size={14} /> {t("addService")}
           </button>
         )}
       </div>
       {note && <div className="text-[11px] text-amber-600 leading-relaxed mb-3">{note}</div>}
-      {items.length === 0 && <div className="text-sm text-stone-400 py-3">{t("noItems")}</div>}
+      {visibleItems.length === 0 && <div className="text-sm text-stone-400 py-3">{t("noItems")}</div>}
       <div className="space-y-2">
-        {items.map((s) => (
+        {visibleItems.map((s, idx) => (
           <div
             key={s.id}
+            draggable={reorderMode}
+            onDragStart={() => setDragIndex(idx)}
+            onDragOver={(e) => { e.preventDefault(); if (overIndex !== idx) setOverIndex(idx); }}
+            onDrop={(e) => { e.preventDefault(); handleDrop(idx); }}
+            onDragEnd={() => { setDragIndex(null); setOverIndex(null); }}
             className={`flex items-center justify-between gap-3 border rounded-lg px-3 py-2.5 transition
+              ${reorderMode ? "cursor-grab active:cursor-grabbing" : ""}
+              ${dragIndex === idx ? "opacity-40" : ""}
+              ${overIndex === idx && dragIndex !== null && dragIndex !== idx ? "border-rose-300 ring-2 ring-rose-200" : ""}
               ${s.hidden ? "bg-stone-100 border-stone-200 opacity-60" : "bg-stone-50 border-stone-100"}`}
           >
-            <div className="min-w-0">
-              <div className="flex items-center gap-1.5">
-                <span className={`text-sm font-medium ${s.hidden ? "text-stone-400 line-through" : "text-stone-800"}`}>
-                  {lang === "zh" ? s.nameZh : s.nameEn}
-                </span>
-                {isAdmin && s.hidden && (
-                  <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-stone-300 text-stone-600">
-                    {t("hiddenBadge")}
+            <div className="min-w-0 flex items-center gap-2">
+              {reorderMode && <GripVertical size={15} className="text-stone-300 flex-shrink-0" />}
+              <div className="min-w-0">
+                <div className="flex items-center gap-1.5">
+                  <span className={`text-sm font-medium ${s.hidden ? "text-stone-400 line-through" : "text-stone-800"}`}>
+                    {lang === "zh" ? s.nameZh : s.nameEn}
                   </span>
+                  {isAdmin && s.hidden && (
+                    <span className="text-[10px] font-semibold px-1.5 py-0.5 rounded bg-stone-300 text-stone-600">
+                      {t("hiddenBadge")}
+                    </span>
+                  )}
+                </div>
+                {isAdmin && s.dur != null && (
+                  <div className="text-[11px] text-stone-400">({s.dur} {t("min")})</div>
                 )}
               </div>
-              {isAdmin && s.dur != null && (
-                <div className="text-[11px] text-stone-400">({s.dur} {t("min")})</div>
-              )}
             </div>
             <div className="flex items-center gap-2 flex-shrink-0">
               <span className={`text-sm font-semibold whitespace-nowrap ${s.hidden ? "text-stone-400" : "text-rose-400"}`}>
                 {lang === "zh" ? s.priceZh : s.priceEn}
               </span>
-              {isAdmin && (
+              {isAdmin && !reorderMode && (
                 <div className="flex gap-1">
                   <button
                     onClick={() => onToggleHidden(s)}
@@ -3139,6 +3319,56 @@ function ServiceList({ category, services, t, lang, isAdmin, onEdit, onDelete, o
             </div>
           </div>
         ))}
+      </div>
+    </div>
+  );
+}
+
+/* ────────────────────────────────────────────────────
+   REORDER CONFIRM DIALOG
+   Lists the new order per category for a final check before
+   it's written to Firestore — this is what guests will see
+   the moment it's saved, so it gets the same confirm-before-
+   submit treatment as the booking forms.
+──────────────────────────────────────────────────── */
+function ServiceReorderConfirmDialog({ t, lang, draftByCat, saving, onCancel, onConfirm }) {
+  return (
+    <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4" onClick={onCancel}>
+      <div className="bg-white rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="px-6 py-4 border-b border-stone-100">
+          <h2 className="font-display text-xl font-light text-stone-800">{t("serviceReorderConfirmTitle")}</h2>
+          <p className="text-xs text-stone-400 mt-1">{t("serviceReorderConfirmDesc")}</p>
+        </div>
+        <div className="px-6 py-4 space-y-4">
+          {SERVICE_CATEGORIES.map((cat) => {
+            const list = draftByCat[cat.id] || [];
+            if (!list.length) return null;
+            return (
+              <div key={cat.id}>
+                <div className={`text-[10px] font-bold tracking-widest uppercase px-2 py-1 rounded-md mb-1.5 w-fit ${cat.chip}`}>
+                  {lang === "zh" ? cat.nameZh : cat.nameEn}
+                </div>
+                <ol className="text-sm text-stone-600 space-y-0.5 list-decimal list-inside">
+                  {list.map((s) => (
+                    <li key={s.id} className={s.hidden ? "text-stone-400" : ""}>
+                      {lang === "zh" ? s.nameZh : s.nameEn}
+                    </li>
+                  ))}
+                </ol>
+              </div>
+            );
+          })}
+        </div>
+        <div className="flex items-center gap-2 px-6 py-4 border-t border-stone-100">
+          <button type="button" onClick={onCancel}
+            className="text-sm font-medium text-stone-500 border border-stone-200 hover:border-stone-300 px-4 py-2 rounded-lg transition ml-auto">
+            {t("confirmBookingBack")}
+          </button>
+          <button type="button" onClick={onConfirm} disabled={saving}
+            className="text-sm font-medium bg-rose-400 hover:bg-rose-500 disabled:opacity-60 text-white px-4 py-2 rounded-lg transition">
+            {saving ? t("guestSubmitting") : t("serviceReorderConfirmSave")}
+          </button>
+        </div>
       </div>
     </div>
   );
