@@ -102,7 +102,6 @@ const DEFAULT_ADMIN = {
   role: "admin",
   displayName: "Owner",
   canApprove: true,
-  superAdmin: true,
 };
 
 const BRANCHES = [
@@ -759,7 +758,7 @@ export default function App() {
 function AppInner() {
   const [lang, setLang] = useState("en");
   const [user, setUser] = useState(null);
-  // When the super admin uses "Login as this account" from Account
+  // When an admin uses "Login as this account" from Account
   // Management, `impersonatorAdmin` holds their REAL identity so the app
   // can show a persistent banner and offer a one-click way back — `user`
   // itself is swapped to the impersonated account so every page behaves
@@ -1077,12 +1076,12 @@ function AppInner() {
     setPage("home");
   };
 
-  // Super-admin-only: switch the active session into another account
+  // Any admin account can switch the active session into another account
   // WITHOUT knowing its password, so the developer/owner can check what
   // a given account actually sees. Logs a lightweight audit trail entry
   // since this bypasses normal authentication by design.
   const startImpersonation = (targetAccount) => {
-    if (!user?.superAdmin) return; // guard even if somehow triggered without the button
+    if (user?.role !== "admin") return; // guard even if somehow triggered without the button
     setImpersonatorAdmin(user);
     setUser(targetAccount);
     setPage("calendar");
@@ -1934,7 +1933,7 @@ function AppInner() {
         </div>
       </header>
 
-      {/* ═══ IMPERSONATION BANNER — always visible while the super admin is
+      {/* ═══ IMPERSONATION BANNER — always visible while an admin is
            viewing the app as another account, with a one-click way back ═══ */}
       {impersonatorAdmin && (
         <div className="fixed top-16 left-0 right-0 h-10 bg-amber-400 text-stone-900 flex items-center justify-center gap-2 px-4 z-40 text-xs font-semibold">
@@ -3513,7 +3512,28 @@ function ServiceReorderConfirmDialog({ t, lang, draftByCat, saving, onCancel, on
 
 function ServiceModal({ t, lang, mode, data, onClose, onSave }) {
   const [form, setForm] = useState(data);
+  const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false); // synchronous guard — see handleSave below
   const set = (field, value) => setForm((f) => ({ ...f, [field]: value }));
+
+  // BUG FIX: Save had no protection against being clicked twice in a row
+  // (double-click, or an impatient second click while the first addDoc()
+  // was still in flight over the network). Each click fired its own
+  // addDoc, so two clicks silently created two identical service
+  // documents — this is the "services keep duplicating" bug.
+  // `savingRef` is checked and set BEFORE anything async happens, so it
+  // blocks a second click immediately and synchronously — unlike the
+  // `saving` state (used only for the disabled/greyed-out visual), a ref
+  // update doesn't wait for React to re-render, so there's no timing gap
+  // for a very fast double-click to slip through.
+  const handleSave = async () => {
+    if (savingRef.current) return;
+    savingRef.current = true;
+    setSaving(true);
+    await onSave(form);
+    savingRef.current = false;
+    setSaving(false); // harmless if the modal already closed on success
+  };
 
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
@@ -3555,8 +3575,8 @@ function ServiceModal({ t, lang, mode, data, onClose, onSave }) {
           </Field>
         </div>
         <div className="flex items-center justify-end gap-2 px-6 py-4 border-t border-stone-100">
-          <button onClick={onClose} className="text-sm font-medium text-stone-500 border border-stone-200 hover:border-stone-300 px-4 py-2 rounded-lg transition">{t("cancel")}</button>
-          <button onClick={() => onSave(form)} className="text-sm font-medium bg-rose-400 hover:bg-rose-500 text-white px-4 py-2 rounded-lg transition">{t("saveInfo")}</button>
+          <button onClick={onClose} disabled={saving} className="text-sm font-medium text-stone-500 border border-stone-200 hover:border-stone-300 disabled:opacity-50 px-4 py-2 rounded-lg transition">{t("cancel")}</button>
+          <button onClick={handleSave} disabled={saving} className="text-sm font-medium bg-rose-400 hover:bg-rose-500 disabled:opacity-60 text-white px-4 py-2 rounded-lg transition">{saving ? t("inventoryLoadingReport") : t("saveInfo")}</button>
         </div>
         <style>{`.input { padding: 9px 12px; border: 1px solid #E7E5E4; border-radius: 8px; font-size: 13px; background: #FAFAF9; outline: none; width: 100%; transition: all .15s; } .input:focus { border-color: #FB7185; background: white; }`}</style>
       </div>
@@ -4098,27 +4118,31 @@ function AccountsPage({ t, lang, accounts, onSave, onDelete, currentUser, onImpe
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState({ username: "", password: "", displayName: "", role: "staff", canApprove: false });
   const [saving, setSaving] = useState(false);
+  const savingRef = useRef(false); // synchronous re-entrancy guard, see save() below
   const setF = (k, v) => setForm((f) => ({ ...f, [k]: v }));
 
   const openNew = () => {
-    if (saving) return;
+    if (savingRef.current) return;
     setEditing("new");
     setForm({ username: "", password: "", displayName: "", role: "staff", canApprove: false });
   };
   const openEdit = (a) => {
-    if (saving) return;
+    if (savingRef.current) return;
     setEditing(a.id);
     setForm({ username: a.username, password: "", displayName: a.displayName || "", role: a.role, canApprove: !!a.canApprove });
   };
   // Saving a password now involves a real (~100ms+) PBKDF2 hash, not just an
-  // instant Firestore write. If the admin were able to open a NEW form
-  // while a previous save was still in flight, that earlier save's
-  // `setEditing(null)` would fire late and yank the just-opened form shut
-  // out from under them. Locking Add/Edit while `saving` is true closes
-  // that race window entirely.
+  // instant Firestore write. `savingRef` is a synchronous guard checked
+  // and set before anything async happens, so a fast double-click on Save
+  // (or opening a new form mid-save) can't slip through — unlike relying
+  // only on the `saving` state/disabled attribute, a ref doesn't wait on
+  // React's render cycle, closing the timing gap completely.
   const save = async () => {
+    if (savingRef.current) return;
+    savingRef.current = true;
     setSaving(true);
     const ok = await onSave(form, editing === "new" ? null : editing);
+    savingRef.current = false;
     setSaving(false);
     if (ok) setEditing(null);
   };
@@ -4188,7 +4212,7 @@ function AccountsPage({ t, lang, accounts, onSave, onDelete, currentUser, onImpe
                 </div>
               </div>
               <div className="flex gap-2">
-                {currentUser?.superAdmin && a.id !== currentUser.id && (
+                {currentUser?.role === "admin" && a.id !== currentUser.id && (
                   <button
                     type="button" onClick={() => onImpersonate(a)}
                     title={t("impersonateHint")}
