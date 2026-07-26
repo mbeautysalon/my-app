@@ -12,7 +12,7 @@ import {
 import { initializeApp } from "firebase/app";
 import {
   getFirestore, collection, addDoc, getDocs, getDoc, query, orderBy, limit, where, serverTimestamp,
-  doc, setDoc, updateDoc, deleteDoc, onSnapshot, writeBatch, runTransaction,
+  doc, setDoc, updateDoc, deleteDoc, onSnapshot, writeBatch, runTransaction, deleteField,
 } from "firebase/firestore";
 
 /* ════════════════════════════════════════════════════
@@ -46,8 +46,55 @@ const LOGO_ICON_URL =
 ════════════════════════════════════════════════════ */
 
 /* ════════════════════════════════════════════════════
+   PASSWORD HASHING (PBKDF2-SHA256 via the native Web Crypto API)
+   No new npm dependency — `crypto.subtle` is built into every modern
+   browser (requires a secure context: HTTPS or localhost, which Vercel
+   and local dev both satisfy). From this point on, only a salted hash
+   is ever written to Firestore — never a plaintext password.
+
+   Existing accounts created before this change still have their old
+   plaintext `password` field. handleLogin (in AppInner) transparently
+   verifies those the old way ONCE, then silently rewrites that account
+   to hashed storage in the background and deletes the plaintext field —
+   the person sees zero difference, they just type the same username/
+   password as always. See handleLogin and saveAccount for the two call
+   sites that use these helpers.
+════════════════════════════════════════════════════ */
+const PBKDF2_ITERATIONS = 150000;
+
+function bytesToHex(bytes) {
+  return Array.from(bytes).map((b) => b.toString(16).padStart(2, "0")).join("");
+}
+function hexToBytes(hex) {
+  const bytes = new Uint8Array(hex.length / 2);
+  for (let i = 0; i < bytes.length; i++) bytes[i] = parseInt(hex.substr(i * 2, 2), 16);
+  return bytes;
+}
+// Derives a salted hash for `password`. Pass an existing `saltHex` to
+// re-derive for comparison (login); omit it to generate a fresh salt
+// (new account / password change).
+async function derivePasswordHash(password, saltHex) {
+  const salt = saltHex ? hexToBytes(saltHex) : crypto.getRandomValues(new Uint8Array(16));
+  const enc = new TextEncoder();
+  const keyMaterial = await crypto.subtle.importKey("raw", enc.encode(password), "PBKDF2", false, ["deriveBits"]);
+  const bits = await crypto.subtle.deriveBits(
+    { name: "PBKDF2", salt, iterations: PBKDF2_ITERATIONS, hash: "SHA-256" },
+    keyMaterial,
+    256
+  );
+  return { hash: bytesToHex(new Uint8Array(bits)), salt: bytesToHex(salt) };
+}
+async function verifyPasswordHash(password, saltHex, expectedHashHex) {
+  const { hash } = await derivePasswordHash(password, saltHex);
+  return hash === expectedHashHex;
+}
+
+/* ════════════════════════════════════════════════════
    DEFAULT ADMIN SEED — only used if Firestore "accounts" collection is empty.
    Actual accounts are stored in Firestore and managed by the admin in the backend.
+   Seeded with a plaintext password like any pre-existing account — the
+   transparent migration in handleLogin hashes it the first time this
+   account logs in, same as it would for any other legacy account.
 ════════════════════════════════════════════════════ */
 const DEFAULT_ADMIN = {
   username: "m_beauty_admin",
@@ -55,6 +102,7 @@ const DEFAULT_ADMIN = {
   role: "admin",
   displayName: "Owner",
   canApprove: true,
+  superAdmin: true,
 };
 
 const BRANCHES = [
@@ -241,6 +289,7 @@ const T = {
   username: { zh: "帳號", en: "Username" },
   password: { zh: "密碼", en: "Password" },
   loginBtn: { zh: "登入", en: "Sign In" },
+  loggingIn: { zh: "登入中...", en: "Signing in..." },
   loginError: { zh: "帳號或密碼錯誤", en: "Invalid username or password" },
   demoAccounts: { zh: "測試帳號", en: "Demo Accounts" },
   ownerAcc: { zh: "管理員（Owner）", en: "Admin (Owner)" },
@@ -442,6 +491,11 @@ const T = {
   accountsDesc: { zh: "新增、刪除或修改員工帳號。帳號資料儲存於 Firestore。", en: "Add, remove or edit staff accounts. All data is stored in Firestore." },
   accountUsername: { zh: "帳號", en: "Username" },
   accountPassword: { zh: "密碼", en: "Password" },
+  accountPasswordKeepHint: { zh: "留空表示不變更密碼", en: "Leave blank to keep current password" },
+  impersonateAs: { zh: "以此身分登入", en: "Login as this account" },
+  impersonateHint: { zh: "以此帳號的身分檢視網站，不需要知道密碼", en: "View the site as this account — no password needed" },
+  impersonatingBanner: { zh: "目前正在以其他帳號身分檢視：", en: "Currently viewing as another account:" },
+  returnToMyAccount: { zh: "返回我的帳號", en: "Return to My Account" },
   accountDisplayName: { zh: "顯示名稱", en: "Display Name" },
   accountRole: { zh: "角色", en: "Role" },
   accountCanApprove: { zh: "可審核預約", en: "Can Approve Bookings" },
@@ -705,6 +759,12 @@ export default function App() {
 function AppInner() {
   const [lang, setLang] = useState("en");
   const [user, setUser] = useState(null);
+  // When the super admin uses "Login as this account" from Account
+  // Management, `impersonatorAdmin` holds their REAL identity so the app
+  // can show a persistent banner and offer a one-click way back — `user`
+  // itself is swapped to the impersonated account so every page behaves
+  // exactly as that account would see it.
+  const [impersonatorAdmin, setImpersonatorAdmin] = useState(null);
   const [accounts, setAccounts] = useState([]);       // loaded from Firestore "accounts"
   const [page, setPage] = useState("home");
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -985,18 +1045,59 @@ function AppInner() {
   }, []);
 
   /* ───── LOGIN HANDLERS ───── */
-  const handleLogin = (username, password) => {
-    const found = accounts.find((a) => a.username === username && a.password === password);
-    if (found) {
+  const handleLogin = async (username, password) => {
+    const found = accounts.find((a) => a.username === username);
+    if (!found) return false;
+
+    // Already-migrated account — verify against the stored salted hash only.
+    if (found.passwordHash && found.passwordSalt) {
+      const ok = await verifyPasswordHash(password, found.passwordSalt, found.passwordHash);
+      if (!ok) return false;
       setUser(found);
       setPage("calendar");
       return true;
     }
-    return false;
+
+    // Legacy plaintext account — verify the old way (unchanged experience),
+    // then silently migrate this one account to hashed storage in the
+    // background. Login isn't delayed waiting for this to finish.
+    if (found.password !== password) return false;
+    setUser(found);
+    setPage("calendar");
+    derivePasswordHash(password)
+      .then(({ hash, salt }) =>
+        updateDoc(doc(db, "accounts", found.id), { passwordHash: hash, passwordSalt: salt, password: deleteField() })
+      )
+      .catch((err) => console.error("password migration error:", err)); // non-fatal — login already succeeded
+    return true;
   };
   const handleLogout = () => {
     setUser(null);
+    setImpersonatorAdmin(null);
     setPage("home");
+  };
+
+  // Super-admin-only: switch the active session into another account
+  // WITHOUT knowing its password, so the developer/owner can check what
+  // a given account actually sees. Logs a lightweight audit trail entry
+  // since this bypasses normal authentication by design.
+  const startImpersonation = (targetAccount) => {
+    if (!user?.superAdmin) return; // guard even if somehow triggered without the button
+    setImpersonatorAdmin(user);
+    setUser(targetAccount);
+    setPage("calendar");
+    addDoc(collection(db, "adminAuditLog"), {
+      action: "impersonate_start",
+      byUsername: user.username,
+      targetUsername: targetAccount.username,
+      at: serverTimestamp(),
+    }).catch((err) => console.error("audit log error:", err)); // never blocks the switch itself
+  };
+  const endImpersonation = () => {
+    if (!impersonatorAdmin) return;
+    setUser(impersonatorAdmin);
+    setImpersonatorAdmin(null);
+    setPage("accounts");
   };
 
   /* ───── BOOKING HANDLERS ───── */
@@ -1678,14 +1779,31 @@ function AppInner() {
   const saveAccount = async (data, editingId) => {
     const trimmed = { ...data, username: data.username.trim(), displayName: data.displayName.trim() };
     if (!trimmed.username) { showToast(t("accountUsernameRequired"), "warn"); return false; }
-    if (!trimmed.password) { showToast(t("accountPasswordRequired"), "warn"); return false; }
+
+    const passwordProvided = !!trimmed.password?.trim();
+    if (!editingId && !passwordProvided) { showToast(t("accountPasswordRequired"), "warn"); return false; }
+
     const duplicate = accounts.find((a) => a.username === trimmed.username && a.id !== editingId);
     if (duplicate) { showToast(t("accountUsernameExists"), "warn"); return false; }
+
     try {
+      const payload = {
+        username: trimmed.username,
+        displayName: trimmed.displayName,
+        role: trimmed.role,
+        canApprove: trimmed.canApprove,
+      };
+      if (passwordProvided) {
+        const { hash, salt } = await derivePasswordHash(trimmed.password.trim());
+        payload.passwordHash = hash;
+        payload.passwordSalt = salt;
+      }
       if (editingId) {
-        await setDoc(doc(db, "accounts", editingId), trimmed);
+        // merge:true + deleteField() clears out any lingering plaintext
+        // password on a legacy account the moment an admin resaves it.
+        await setDoc(doc(db, "accounts", editingId), passwordProvided ? { ...payload, password: deleteField() } : payload, { merge: true });
       } else {
-        await addDoc(collection(db, "accounts"), trimmed);
+        await addDoc(collection(db, "accounts"), payload);
       }
       showToast(t("accountSaved"), "success");
       return true;
@@ -1816,10 +1934,21 @@ function AppInner() {
         </div>
       </header>
 
-      <div className="flex pt-16">
+      {/* ═══ IMPERSONATION BANNER — always visible while the super admin is
+           viewing the app as another account, with a one-click way back ═══ */}
+      {impersonatorAdmin && (
+        <div className="fixed top-16 left-0 right-0 h-10 bg-amber-400 text-stone-900 flex items-center justify-center gap-2 px-4 z-40 text-xs font-semibold">
+          🔑 {t("impersonatingBanner")} <span className="font-bold">{user.displayName || user.username}</span>
+          <button onClick={endImpersonation} className="ml-2 bg-stone-900 text-white text-[11px] font-semibold px-3 py-1 rounded-full hover:bg-stone-800 transition">
+            {t("returnToMyAccount")}
+          </button>
+        </div>
+      )}
+
+      <div className={`flex ${impersonatorAdmin ? "pt-[104px]" : "pt-16"}`}>
         {/* ═══ SIDEBAR ═══ */}
         <nav
-          className={`fixed top-16 bottom-0 left-0 w-56 bg-white border-r border-stone-200 flex-col z-30
+          className={`fixed ${impersonatorAdmin ? "top-[104px]" : "top-16"} bottom-0 left-0 w-56 bg-white border-r border-stone-200 flex-col z-30
           ${sidebarOpen ? "flex" : "hidden"}`}
         >
           <div className="p-4">
@@ -1908,7 +2037,7 @@ function AppInner() {
             <PendingPage t={t} lang={lang} services={services} bookings={bookings} isAdmin={user.role === "admin"} />
           )}
           {page === "accounts" && user.role === "admin" && (
-            <AccountsPage t={t} lang={lang} accounts={accounts} onSave={saveAccount} onDelete={deleteAccount} />
+            <AccountsPage t={t} lang={lang} accounts={accounts} onSave={saveAccount} onDelete={deleteAccount} currentUser={user} onImpersonate={startImpersonation} />
           )}
           {page === "inventory" && (
             <InventoryPage
@@ -2000,8 +2129,12 @@ function HomePage({ lang, setLang, t, introText, onLogin, branchInfo, services, 
 
   const displayIntro = introText?.[lang] || T["homeIntro"]?.[lang] || "";
 
-  const submit = () => {
-    const ok = onLogin(username.trim(), password);
+  const [loggingIn, setLoggingIn] = useState(false);
+  const submit = async () => {
+    if (loggingIn) return;
+    setLoggingIn(true);
+    const ok = await onLogin(username.trim(), password);
+    setLoggingIn(false);
     if (!ok) setLoginError(t("loginError"));
     else { setShowLogin(false); setLoginError(""); }
   };
@@ -2056,7 +2189,7 @@ function HomePage({ lang, setLang, t, introText, onLogin, branchInfo, services, 
                     <input value={username} onChange={(e) => setUsername(e.target.value)} onKeyDown={keyDown} placeholder={t("username")} className="w-full px-3 py-2 text-sm border border-stone-200 rounded-lg bg-stone-50 focus:outline-none focus:border-rose-400 transition" />
                     <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} onKeyDown={keyDown} placeholder={t("password")} className="w-full px-3 py-2 text-sm border border-stone-200 rounded-lg bg-stone-50 focus:outline-none focus:border-rose-400 transition" />
                     {loginError && <div className="text-xs text-rose-500">{loginError}</div>}
-                    <button type="button" onClick={submit} className="w-full bg-rose-400 hover:bg-rose-500 text-white text-sm font-medium py-2 rounded-lg transition">{t("loginBtn")}</button>
+                    <button type="button" onClick={submit} disabled={loggingIn} className="w-full bg-rose-400 hover:bg-rose-500 disabled:opacity-60 text-white text-sm font-medium py-2 rounded-lg transition">{loggingIn ? t("loggingIn") : t("loginBtn")}</button>
                   </div>
                 </div>
               )}
@@ -3423,7 +3556,7 @@ function ServiceModal({ t, lang, mode, data, onClose, onSave }) {
         </div>
         <div className="flex items-center justify-end gap-2 px-6 py-4 border-t border-stone-100">
           <button onClick={onClose} className="text-sm font-medium text-stone-500 border border-stone-200 hover:border-stone-300 px-4 py-2 rounded-lg transition">{t("cancel")}</button>
-          <button onClick={() => onSave(form)} className="text-sm font-medium bg-rose-400 hover:bg-rose-500 text-white px-4 py-2 rounded-lg transition">{t("save")}</button>
+          <button onClick={() => onSave(form)} className="text-sm font-medium bg-rose-400 hover:bg-rose-500 text-white px-4 py-2 rounded-lg transition">{t("saveInfo")}</button>
         </div>
         <style>{`.input { padding: 9px 12px; border: 1px solid #E7E5E4; border-radius: 8px; font-size: 13px; background: #FAFAF9; outline: none; width: 100%; transition: all .15s; } .input:focus { border-color: #FB7185; background: white; }`}</style>
       </div>
@@ -3664,27 +3797,71 @@ function PendingPage({ t, lang, services, bookings, isAdmin }) {
     return sorted;
   }, [bookings, isAdmin, rangeStart, rangeEnd, onlyPhone, onlySocial, statusFilter, sortOldFirst]);
 
-  // Potential-member roster: dedupe filtered bookings by phone (preferred)
-  // or social handle, keeping only entries that have at least one contact
-  // channel — the stated criterion for a member lead. Aggregates per person:
-  // visit count + first/last booking date.
+  // Potential-member roster: dedupe filtered bookings by contact identity,
+  // keeping only entries that have at least one contact channel.
+  //
+  // BUG FIX: the old version picked a SINGLE key per booking (phone if
+  // present, else social) and grouped by that alone. A real customer who
+  // sometimes only leaves a phone, sometimes only a social handle, and
+  // sometimes both, got silently split into 2–3 separate "leads" instead
+  // of one — undercounting their true visit count. Fixed with a small
+  // union-find: any booking that has BOTH a phone and a social handle
+  // links those two identifiers together, so every booking that shares
+  // either one — even indirectly — merges into a single lead.
+  // Phone numbers are also normalized so "+639171234567" and
+  // "09171234567" (same number, different formats) count as one person.
   const memberLeads = useMemo(() => {
     if (!isAdmin) return [];
+
+    const parent = new Map();
+    const find = (x) => {
+      if (!parent.has(x)) parent.set(x, x);
+      while (parent.get(x) !== x) { parent.set(x, parent.get(parent.get(x))); x = parent.get(x); }
+      return x;
+    };
+    const union = (a, b) => {
+      const ra = find(a), rb = find(b);
+      if (ra !== rb) parent.set(ra, rb);
+    };
+    const normalizePhone = (raw) => {
+      let digits = (raw || "").replace(/\D/g, "");
+      if (!digits) return "";
+      if (digits.startsWith("63") && digits.length > 10) digits = "0" + digits.slice(2); // +63 → local 0-prefix
+      if (digits.length === 10 && !digits.startsWith("0")) digits = "0" + digits;
+      return digits;
+    };
+    const keysFor = (b) => {
+      const phone = normalizePhone(b.phone);
+      const social = (b.social || "").trim().toLowerCase();
+      const keys = [];
+      if (phone) keys.push(`p:${phone}`);
+      if (social) keys.push(`s:${social}`);
+      return keys;
+    };
+
+    // Pass 1: union every identifier that co-occurs on the same booking.
+    visible.forEach((b) => {
+      const keys = keysFor(b);
+      for (let i = 1; i < keys.length; i++) union(keys[0], keys[i]);
+    });
+
+    // Pass 2: aggregate bookings under their resolved identity.
     const map = new Map();
     visible.forEach((b) => {
+      const keys = keysFor(b);
+      if (!keys.length) return; // no contact info at all — not a lead
+      const root = find(keys[0]);
+      if (!map.has(root)) {
+        map.set(root, { name: "", phone: "", social: "", contactVia: "", count: 0, firstDate: "", lastDate: "" });
+      }
+      const rec = map.get(root);
+      rec.count += 1;
       const phone = (b.phone || "").trim();
       const social = (b.social || "").trim();
-      if (!phone && !social) return;
-      const key = phone ? `p:${phone.replace(/\D/g, "") || phone.toLowerCase()}` : `s:${social.toLowerCase()}`;
-      if (!map.has(key)) {
-        map.set(key, { name: b.name || "", phone, social, contactVia: b.contactVia || "", count: 0, firstDate: b.date || "", lastDate: b.date || "" });
-      }
-      const rec = map.get(key);
-      rec.count += 1;
-      if (!rec.name && b.name) rec.name = b.name;
-      if (!rec.phone && phone) rec.phone = phone;
-      if (!rec.social && social) rec.social = social;
-      if (!rec.contactVia && b.contactVia) rec.contactVia = b.contactVia;
+      if (b.name && !rec.name) rec.name = b.name;
+      if (phone && !rec.phone) rec.phone = phone;
+      if (social && !rec.social) rec.social = social;
+      if (b.contactVia && !rec.contactVia) rec.contactVia = b.contactVia;
       if (b.date && (!rec.firstDate || b.date < rec.firstDate)) rec.firstDate = b.date;
       if (b.date && (!rec.lastDate || b.date > rec.lastDate)) rec.lastDate = b.date;
     });
@@ -3917,21 +4094,32 @@ function PendingPage({ t, lang, services, bookings, isAdmin }) {
    ACCOUNTS PAGE (admin only)
 ════════════════════════════════════════════════════ */
 
-function AccountsPage({ t, lang, accounts, onSave, onDelete }) {
+function AccountsPage({ t, lang, accounts, onSave, onDelete, currentUser, onImpersonate }) {
   const [editing, setEditing] = useState(null);
   const [form, setForm] = useState({ username: "", password: "", displayName: "", role: "staff", canApprove: false });
+  const [saving, setSaving] = useState(false);
   const setF = (k, v) => setForm((f) => ({ ...f, [k]: v }));
 
   const openNew = () => {
+    if (saving) return;
     setEditing("new");
     setForm({ username: "", password: "", displayName: "", role: "staff", canApprove: false });
   };
   const openEdit = (a) => {
+    if (saving) return;
     setEditing(a.id);
-    setForm({ username: a.username, password: a.password, displayName: a.displayName || "", role: a.role, canApprove: !!a.canApprove });
+    setForm({ username: a.username, password: "", displayName: a.displayName || "", role: a.role, canApprove: !!a.canApprove });
   };
+  // Saving a password now involves a real (~100ms+) PBKDF2 hash, not just an
+  // instant Firestore write. If the admin were able to open a NEW form
+  // while a previous save was still in flight, that earlier save's
+  // `setEditing(null)` would fire late and yank the just-opened form shut
+  // out from under them. Locking Add/Edit while `saving` is true closes
+  // that race window entirely.
   const save = async () => {
+    setSaving(true);
     const ok = await onSave(form, editing === "new" ? null : editing);
+    setSaving(false);
     if (ok) setEditing(null);
   };
 
@@ -3942,7 +4130,7 @@ function AccountsPage({ t, lang, accounts, onSave, onDelete }) {
 
       {/* Add button */}
       <div className="flex justify-end mb-4">
-        <button type="button" onClick={openNew} className="flex items-center gap-1.5 bg-rose-400 hover:bg-rose-500 text-white text-sm font-medium px-4 py-2 rounded-lg transition">
+        <button type="button" onClick={openNew} disabled={saving} className="flex items-center gap-1.5 bg-rose-400 hover:bg-rose-500 disabled:opacity-50 text-white text-sm font-medium px-4 py-2 rounded-lg transition">
           <Plus size={15} /> {t("addAccount")}
         </button>
       </div>
@@ -3956,7 +4144,8 @@ function AccountsPage({ t, lang, accounts, onSave, onDelete }) {
               <input value={form.username} onChange={(e) => setF("username", e.target.value)} className="input" disabled={editing !== "new"} />
             </Field>
             <Field label={t("accountPassword")}>
-              <input value={form.password} onChange={(e) => setF("password", e.target.value)} className="input" type="text" />
+              <input value={form.password} onChange={(e) => setF("password", e.target.value)} className="input" type="password"
+                placeholder={editing !== "new" ? t("accountPasswordKeepHint") : ""} />
             </Field>
             <Field label={t("accountDisplayName")}>
               <input value={form.displayName} onChange={(e) => setF("displayName", e.target.value)} className="input" />
@@ -3973,8 +4162,10 @@ function AccountsPage({ t, lang, accounts, onSave, onDelete }) {
             <span className="text-sm text-stone-600">{t("accountCanApprove")}</span>
           </label>
           <div className="flex gap-2 mt-4">
-            <button type="button" onClick={save} className="bg-rose-400 hover:bg-rose-500 text-white text-sm font-medium px-4 py-2 rounded-lg transition">{t("saveAccount")}</button>
-            <button type="button" onClick={() => setEditing(null)} className="text-sm text-stone-500 border border-stone-200 px-4 py-2 rounded-lg transition">{t("cancel")}</button>
+            <button type="button" onClick={save} disabled={saving} className="bg-rose-400 hover:bg-rose-500 disabled:opacity-60 text-white text-sm font-medium px-4 py-2 rounded-lg transition">
+              {saving ? t("inventoryLoadingReport") : t("saveAccount")}
+            </button>
+            <button type="button" onClick={() => setEditing(null)} disabled={saving} className="text-sm text-stone-500 border border-stone-200 disabled:opacity-50 px-4 py-2 rounded-lg transition">{t("cancel")}</button>
           </div>
           <style>{`.input { padding:9px 12px; border:1px solid #E7E5E4; border-radius:8px; font-size:13px; background:#FAFAF9; outline:none; width:100%; transition:border-color .15s; } .input:focus { border-color:#FB7185; background:white; } .input:disabled { opacity:0.5; cursor:not-allowed; }`}</style>
         </div>
@@ -3997,8 +4188,17 @@ function AccountsPage({ t, lang, accounts, onSave, onDelete }) {
                 </div>
               </div>
               <div className="flex gap-2">
-                <button type="button" onClick={() => openEdit(a)} className="text-stone-400 hover:text-rose-400 transition p-1"><Pencil size={15} /></button>
-                <button type="button" onClick={() => onDelete(a.id)} className="text-stone-400 hover:text-rose-500 transition p-1"><Trash2 size={15} /></button>
+                {currentUser?.superAdmin && a.id !== currentUser.id && (
+                  <button
+                    type="button" onClick={() => onImpersonate(a)}
+                    title={t("impersonateHint")}
+                    className="flex items-center gap-1 text-xs font-medium text-amber-600 hover:text-amber-700 border border-amber-200 hover:border-amber-300 bg-amber-50 px-2.5 py-1 rounded-lg transition"
+                  >
+                    🔑 {t("impersonateAs")}
+                  </button>
+                )}
+                <button type="button" onClick={() => openEdit(a)} disabled={saving} className="text-stone-400 hover:text-rose-400 disabled:opacity-40 transition p-1"><Pencil size={15} /></button>
+                <button type="button" onClick={() => onDelete(a.id)} disabled={saving} className="text-stone-400 hover:text-rose-500 disabled:opacity-40 transition p-1"><Trash2 size={15} /></button>
               </div>
             </div>
           ))}
@@ -4547,7 +4747,7 @@ function InventoryPage({
           <GField label={t("inventoryQty")}>
             <input type="number" value={newQty} onChange={(e) => setNewQty(e.target.value)} className="ginput" placeholder="0" />
           </GField>
-          <button type="button" onClick={handleAddSubmit} className="text-sm font-medium bg-rose-400 hover:bg-rose-500 text-white px-4 py-2.5 rounded-lg transition">{t("save")}</button>
+          <button type="button" onClick={handleAddSubmit} className="text-sm font-medium bg-rose-400 hover:bg-rose-500 text-white px-4 py-2.5 rounded-lg transition">{t("saveInfo")}</button>
           <button type="button" onClick={() => setShowAddForm(false)} className="text-sm font-medium text-stone-500 border border-stone-200 px-4 py-2.5 rounded-lg transition">{t("cancel")}</button>
           <style>{`.ginput { padding:9px 12px; border:1px solid #E7E5E4; border-radius:8px; font-size:13px; background:#FAFAF9; outline:none; transition:border-color .15s; } .ginput:focus { border-color:#FB7185; background:white; }`}</style>
         </div>
