@@ -1976,7 +1976,9 @@ function AppInner() {
               onClick={() => { setPage("pending"); setSidebarOpen(false); }}
             />
             <SidebarItem icon={<Package size={17} />} label={t("navInventory")} active={page === "inventory"} onClick={() => { setPage("inventory"); setSidebarOpen(false); }} />
-            <SidebarItem icon={<ShoppingCart size={17} />} label={t("navPOS")} active={page === "pos"} onClick={() => { setPage("pos"); setSidebarOpen(false); }} />
+            {user.role === "admin" && (
+              <SidebarItem icon={<ShoppingCart size={17} />} label={t("navPOS")} active={page === "pos"} onClick={() => { setPage("pos"); setSidebarOpen(false); }} />
+            )}
             <SidebarItem icon={<Scissors size={17} />} label={t("navServices")} active={page === "services"} onClick={() => { setPage("services"); setSidebarOpen(false); }} />
             <SidebarItem icon={<MapPin size={17} />} label={t("navContact")} active={page === "contact"} onClick={() => { setPage("contact"); setSidebarOpen(false); }} />
             {user.role === "admin" && (
@@ -2057,7 +2059,7 @@ function AppInner() {
               showToast={showToast}
             />
           )}
-          {page === "pos" && (
+          {page === "pos" && user.role === "admin" && (
             <POSPage
               t={t} lang={lang} user={user}
               services={services}
@@ -2371,25 +2373,32 @@ function ServiceCheckboxPicker({ services, lang, selected = [], onChange, readOn
   // Always filter hidden services from picker and read-only display
   const visibleServices = services.filter((s) => !s.hidden);
 
-  const toggle = (id) => {
-    const next = selected.includes(id)
-      ? selected.filter((s) => s !== id)
-      : [...selected, id];
-    onChange(next);
+  // `selected` can now contain the SAME service id more than once — that's
+  // how quantity is represented (e.g. two people in one party both getting
+  // a manicure). qtyOf() counts occurrences; bump() rewrites the array to
+  // have exactly `next` copies of that id, preserving everything else.
+  const qtyOf = (id) => selected.filter((s) => s === id || s === String(id)).length;
+  const bump = (id, delta) => {
+    if (readOnly) return;
+    const next = Math.max(0, qtyOf(id) + delta);
+    const withoutId = selected.filter((s) => s !== id && s !== String(id));
+    onChange([...withoutId, ...Array(next).fill(id)]);
   };
 
   if (readOnly) {
     if (!selected.length) return <span className="text-stone-400 text-sm">—</span>;
+    const uniqueIds = [...new Set(selected)];
     return (
       <div className="flex flex-wrap gap-1.5">
-        {selected.map((id) => {
+        {uniqueIds.map((id) => {
           // For read-only (detail view), show even hidden services if already booked
           const svc = services.find((s) => s.id === id || s.id === String(id));
           const cat = SERVICE_CATEGORIES.find((c) => c.id === svc?.cat);
           if (!svc) return null;
+          const qty = qtyOf(id);
           return (
             <span key={id} className={`text-xs font-medium px-2 py-0.5 rounded-full ${cat?.chip || "bg-stone-100 text-stone-500"}`}>
-              {lang === "zh" ? svc.nameZh : svc.nameEn}
+              {lang === "zh" ? svc.nameZh : svc.nameEn}{qty > 1 ? ` ×${qty}` : ""}
             </span>
           );
         })}
@@ -2409,25 +2418,40 @@ function ServiceCheckboxPicker({ services, lang, selected = [], onChange, readOn
             </div>
             <div className="grid grid-cols-1 sm:grid-cols-2 gap-1">
               {items.map((s) => {
-                const checked = selected.includes(s.id) || selected.includes(String(s.id));
+                const qty = qtyOf(s.id);
+                const active = qty > 0;
                 return (
-                  <label
+                  <div
                     key={s.id}
-                    className={`flex items-center gap-2.5 px-3 py-2 rounded-lg border cursor-pointer transition text-sm
-                      ${checked
+                    className={`flex items-center gap-2.5 px-3 py-2 rounded-lg border transition text-sm
+                      ${active
                         ? "border-rose-300 bg-rose-50 text-rose-700"
-                        : "border-stone-200 bg-stone-50 text-stone-600 hover:border-rose-200 hover:bg-rose-50/50"
+                        : "border-stone-200 bg-stone-50 text-stone-600"
                       }`}
                   >
-                    <input
-                      type="checkbox"
-                      checked={checked}
-                      onChange={() => toggle(s.id)}
-                      className="w-3.5 h-3.5 accent-rose-400 flex-shrink-0"
-                    />
-                    <span className="leading-tight">{lang === "zh" ? s.nameZh : s.nameEn}</span>
-                    <span className="ml-auto text-xs font-semibold flex-shrink-0">{lang === "zh" ? s.priceZh : s.priceEn}</span>
-                  </label>
+                    <span className="leading-tight flex-1 min-w-0 truncate">{lang === "zh" ? s.nameZh : s.nameEn}</span>
+                    <span className="text-xs font-semibold flex-shrink-0">{lang === "zh" ? s.priceZh : s.priceEn}</span>
+                    {active ? (
+                      <div className="flex items-center gap-1 flex-shrink-0">
+                        <button
+                          type="button" onClick={() => bump(s.id, -1)}
+                          className="w-6 h-6 flex items-center justify-center rounded-md bg-white border border-rose-200 text-rose-500 hover:bg-rose-100 transition font-bold text-sm"
+                        >−</button>
+                        <span className="w-4 text-center text-sm font-bold text-rose-600">{qty}</span>
+                        <button
+                          type="button" onClick={() => bump(s.id, 1)}
+                          className="w-6 h-6 flex items-center justify-center rounded-md bg-white border border-rose-200 text-rose-500 hover:bg-rose-100 transition font-bold text-sm"
+                        >+</button>
+                      </div>
+                    ) : (
+                      <button
+                        type="button" onClick={() => bump(s.id, 1)}
+                        className="flex-shrink-0 flex items-center gap-1 text-xs font-semibold text-rose-400 hover:text-rose-500 border border-stone-200 hover:border-rose-300 px-2 py-1 rounded-md transition"
+                      >
+                        <Plus size={12} /> {lang === "zh" ? "加入" : "Add"}
+                      </button>
+                    )}
+                  </div>
                 );
               })}
             </div>
@@ -2591,24 +2615,31 @@ function GField({ label, children, full }) {
    scrolling back up through a long category list.
 ──────────────────────────────────────────────────── */
 function SelectedServicesSummary({ t, lang, services, selectedIds = [] }) {
-  const selected = selectedIds
-    .map((id) => services.find((s) => s.id === id || s.id === String(id)))
+  // selectedIds may contain the same id more than once (quantity) — group
+  // by unique service and count occurrences so "Manicure x2" shows once,
+  // not as two separate identical chips.
+  const uniqueSelected = [...new Set(selectedIds)]
+    .map((id) => {
+      const svc = services.find((s) => s.id === id || s.id === String(id));
+      const qty = selectedIds.filter((x) => x === id || x === String(id)).length;
+      return svc ? { svc, qty } : null;
+    })
     .filter(Boolean);
 
-  if (!selected.length) {
+  if (!uniqueSelected.length) {
     return <div className="text-xs text-stone-400 italic mt-2">{t("noServicesSelectedYet")}</div>;
   }
   return (
     <div className="mt-2">
       <div className="text-[11px] font-medium text-stone-400 mb-1.5">
-        {t("selectedServices")} ({selected.length})
+        {t("selectedServices")} ({selectedIds.length})
       </div>
       <div className="flex flex-wrap gap-1.5">
-        {selected.map((s) => {
+        {uniqueSelected.map(({ svc: s, qty }) => {
           const cat = SERVICE_CATEGORIES.find((c) => c.id === s.cat);
           return (
             <span key={s.id} className={`text-xs font-medium px-2.5 py-1 rounded-full flex items-center gap-1.5 ${cat?.chip || "bg-stone-100 text-stone-500"}`}>
-              {lang === "zh" ? s.nameZh : s.nameEn}
+              {lang === "zh" ? s.nameZh : s.nameEn}{qty > 1 ? ` ×${qty}` : ""}
               <span className="opacity-70">{lang === "zh" ? s.priceZh : s.priceEn}</span>
             </span>
           );
@@ -2625,8 +2656,13 @@ function SelectedServicesSummary({ t, lang, services, selectedIds = [] }) {
    new/edit booking modal.
 ──────────────────────────────────────────────────── */
 function BookingConfirmDialog({ t, lang, form, services, branchLabel, onConfirm, onCancel, submitting }) {
-  const selected = (form.serviceIds || [])
-    .map((id) => services.find((s) => s.id === id || s.id === String(id)))
+  const serviceIds = form.serviceIds || [];
+  const selected = [...new Set(serviceIds)]
+    .map((id) => {
+      const svc = services.find((s) => s.id === id || s.id === String(id));
+      const qty = serviceIds.filter((x) => x === id || x === String(id)).length;
+      return svc ? { svc, qty } : null;
+    })
     .filter(Boolean);
 
   return (
@@ -2642,16 +2678,16 @@ function BookingConfirmDialog({ t, lang, form, services, branchLabel, onConfirm,
           {branchLabel && <div className="text-sm"><span className="text-stone-400">{t("branch")}: </span><b className="text-stone-800">{branchLabel}</b></div>}
           {form.staff && <div className="text-sm"><span className="text-stone-400">{t("stylist")}: </span><b className="text-stone-800">{form.staff}</b></div>}
           <div>
-            <div className="text-xs text-stone-400 mb-1.5 mt-2">{t("service")} ({selected.length})</div>
+            <div className="text-xs text-stone-400 mb-1.5 mt-2">{t("service")} ({serviceIds.length})</div>
             {selected.length === 0 ? (
               <div className="text-xs text-rose-500">{t("noServicesSelectedYet")}</div>
             ) : (
               <div className="flex flex-wrap gap-1.5">
-                {selected.map((s) => {
+                {selected.map(({ svc: s, qty }) => {
                   const cat = SERVICE_CATEGORIES.find((c) => c.id === s.cat);
                   return (
                     <span key={s.id} className={`text-xs font-medium px-2.5 py-1 rounded-full ${cat?.chip || "bg-stone-100 text-stone-500"}`}>
-                      {lang === "zh" ? s.nameZh : s.nameEn}
+                      {lang === "zh" ? s.nameZh : s.nameEn}{qty > 1 ? ` ×${qty}` : ""}
                     </span>
                   );
                 })}
@@ -2864,6 +2900,16 @@ function CalendarPage({
                     {dayBookings.map((b) => {
                       const ids = b.serviceIds || (b.serviceId ? [b.serviceId] : []);
                       const svcs = ids.map((id) => serviceLookup(id)).filter(Boolean);
+                      // Dedupe for display — the same service can appear more than
+                      // once in `ids` to represent quantity (e.g. two people both
+                      // getting a manicure), so show "Manicure ×2" once instead of
+                      // listing the same name twice.
+                      const uniqueSvcs = [...new Map(svcs.map((s) => [s.id, s])).values()];
+                      const svcLabel = (s) => {
+                        const qty = ids.filter((id) => id === s.id || id === String(s.id)).length;
+                        const name = lang === "zh" ? s.nameZh : s.nameEn;
+                        return qty > 1 ? `${name} ×${qty}` : name;
+                      };
                       const firstCat = svcs[0] ? SERVICE_CATEGORIES.find((c) => c.id === svcs[0].cat) : null;
                       const statusMeta = bookingStatusMeta(b.status);
                       const isNoShow = b.status === "no_show";
@@ -2898,12 +2944,12 @@ function CalendarPage({
                               </span>
                             )}
                             <span className={`text-[10px] truncate ${statusMeta ? "text-stone-500" : "text-stone-500 group-hover:text-rose-50"}`}>
-                              {svcs.length > 0
-                                ? svcs.map((s) => lang === "zh" ? s.nameZh : s.nameEn).join(", ")
+                              {uniqueSvcs.length > 0
+                                ? uniqueSvcs.map(svcLabel).join(", ")
                                 : "—"}
                             </span>
-                            {svcs.length > 1 && (
-                              <span className={`text-[9px] ${statusMeta ? "text-stone-400" : "text-stone-400 group-hover:text-rose-100"}`}>+{svcs.length - 1}</span>
+                            {uniqueSvcs.length > 1 && (
+                              <span className={`text-[9px] ${statusMeta ? "text-stone-400" : "text-stone-400 group-hover:text-rose-100"}`}>+{uniqueSvcs.length - 1}</span>
                             )}
                           </div>
                         </div>
