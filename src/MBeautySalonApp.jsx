@@ -2416,39 +2416,43 @@ function ServiceCheckboxPicker({ services, lang, selected = [], onChange, readOn
             <div className={`text-[10px] font-bold tracking-widest uppercase px-2 py-1 rounded-md mb-1.5 w-fit ${cat.chip}`}>
               {lang === "zh" ? cat.nameZh : cat.nameEn}
             </div>
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-1">
+            <div className="grid grid-cols-1 gap-1.5">
               {items.map((s) => {
                 const qty = qtyOf(s.id);
                 const active = qty > 0;
                 return (
                   <div
                     key={s.id}
-                    className={`flex items-center gap-2.5 px-3 py-2 rounded-lg border transition text-sm
+                    className={`flex items-center gap-2 px-3 py-2 rounded-lg border transition text-sm
                       ${active
                         ? "border-rose-300 bg-rose-50 text-rose-700"
                         : "border-stone-200 bg-stone-50 text-stone-600"
                       }`}
                   >
-                    <span className="leading-tight flex-1 min-w-0 truncate">{lang === "zh" ? s.nameZh : s.nameEn}</span>
-                    <span className="text-xs font-semibold flex-shrink-0">{lang === "zh" ? s.priceZh : s.priceEn}</span>
+                    <span className="leading-snug flex-1 min-w-0 break-words">{lang === "zh" ? s.nameZh : s.nameEn}</span>
+                    <span className="text-xs font-semibold flex-shrink-0 whitespace-nowrap">{lang === "zh" ? s.priceZh : s.priceEn}</span>
                     {active ? (
                       <div className="flex items-center gap-1 flex-shrink-0">
                         <button
                           type="button" onClick={() => bump(s.id, -1)}
-                          className="w-6 h-6 flex items-center justify-center rounded-md bg-white border border-rose-200 text-rose-500 hover:bg-rose-100 transition font-bold text-sm"
+                          aria-label={lang === "zh" ? "減少數量" : "Decrease quantity"}
+                          className="w-7 h-7 flex items-center justify-center rounded-full bg-white border border-rose-200 text-rose-500 hover:bg-rose-100 transition font-bold text-sm flex-shrink-0"
                         >−</button>
                         <span className="w-4 text-center text-sm font-bold text-rose-600">{qty}</span>
                         <button
                           type="button" onClick={() => bump(s.id, 1)}
-                          className="w-6 h-6 flex items-center justify-center rounded-md bg-white border border-rose-200 text-rose-500 hover:bg-rose-100 transition font-bold text-sm"
+                          aria-label={lang === "zh" ? "增加數量" : "Increase quantity"}
+                          className="w-7 h-7 flex items-center justify-center rounded-full bg-white border border-rose-200 text-rose-500 hover:bg-rose-100 transition font-bold text-sm flex-shrink-0"
                         >+</button>
                       </div>
                     ) : (
                       <button
                         type="button" onClick={() => bump(s.id, 1)}
-                        className="flex-shrink-0 flex items-center gap-1 text-xs font-semibold text-rose-400 hover:text-rose-500 border border-stone-200 hover:border-rose-300 px-2 py-1 rounded-md transition"
+                        aria-label={lang === "zh" ? "加入" : "Add"}
+                        title={lang === "zh" ? "加入" : "Add"}
+                        className="flex-shrink-0 w-7 h-7 flex items-center justify-center rounded-full text-rose-400 hover:text-white hover:bg-rose-400 border border-stone-200 hover:border-rose-400 transition"
                       >
-                        <Plus size={12} /> {lang === "zh" ? "加入" : "Add"}
+                        <Plus size={15} />
                       </button>
                     )}
                   </div>
@@ -3041,7 +3045,7 @@ function BookingModal({ t, lang, user, mode, data, services, onClose, onSave, on
 
   return (
     <div className="fixed inset-0 bg-black/40 z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-2xl w-full max-w-lg max-h-[90vh] overflow-y-auto shadow-2xl" onClick={(e) => e.stopPropagation()}>
+      <div className="bg-white rounded-2xl w-full max-w-2xl max-h-[90vh] overflow-y-auto shadow-2xl" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-6 py-4 border-b border-stone-100">
           <h2 className="font-display text-xl font-light text-stone-800">{title}</h2>
           <button onClick={onClose} className="text-stone-400 hover:text-rose-400 transition"><X size={20} /></button>
