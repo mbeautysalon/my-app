@@ -113,6 +113,8 @@ const BRANCHES = [
     addr: "2F, Salinas Premier, Lahug, Cebu City",
     phone: "+63 967 238 9044",
     hours: "Mon–Sun 11:00–21:00",
+    openTime: "11:00",
+    closeTime: "21:00",
     dot: "bg-rose-400",
   },
   {
@@ -123,6 +125,8 @@ const BRANCHES = [
     addr: "2nd Floor(New extension area),Emall, Cebu City",
     phone: "+63 917 621 7130",
     hours: "Mon–Sun 09:00–20:00",
+    openTime: "09:00",
+    closeTime: "20:00",
     dot: "bg-amber-400",
   },
 ];
@@ -464,6 +468,9 @@ const T = {
   address: { zh: "地址", en: "Address" },
   phoneLabel: { zh: "電話", en: "Phone" },
   openingHours: { zh: "營業時間", en: "Opening Hours" },
+  bookingOpenTime: { zh: "開始接受預約時間", en: "Booking Start Time" },
+  bookingCloseTime: { zh: "最後接受預約時間", en: "Booking End Time" },
+  bookingHoursHint: { zh: "這兩個時間會決定預約表單的時段選單範圍（每10分鐘一格），跟上面的文字說明是分開設定的，請確認一致。", en: "These two times control the range shown in the booking time dropdown (10-minute steps). Set separately from the text above — please keep them consistent." },
   editInfo: { zh: "編輯資訊", en: "Edit Info" },
   saveInfo: { zh: "儲存", en: "Save" },
   savedInfo: { zh: "資訊已儲存", en: "Info saved" },
@@ -1111,7 +1118,7 @@ function AppInner() {
         serviceIds: [],
         staff: "",
         date: prefillDate || todayStr(),
-        time: "10:00",
+        time: "",
         note: "",
       },
     });
@@ -2085,6 +2092,7 @@ function AppInner() {
           t={t} lang={lang} user={user}
           mode={bookingModal.mode} data={bookingModal.data}
           services={services}
+          branchInfo={branchInfo}
           onClose={() => setBookingModal(null)}
           onSave={saveBooking}
           onDelete={deleteBooking}
@@ -2301,12 +2309,25 @@ function HomePage({ lang, setLang, t, introText, onLogin, branchInfo, services, 
    GUEST BOOKING FORM (no login required)
 ════════════════════════════════════════════════════ */
 
-const BUSINESS_HOURS = [
-  "09:00","09:30","10:00","10:30","11:00","11:30",
-  "12:00","12:30","13:00","13:30","14:00","14:30",
-  "15:00","15:30","16:00","16:30","17:00","17:30",
-  "18:00","18:30","19:00","19:30","20:00","20:30",
-];
+// Generates 10-minute-interval time slots ("11:00","11:10","11:20"...) for
+// a given branch's opening hours, so the dropdown only ever shows times
+// that branch is actually open — falls back to a sensible default range
+// if a branch is somehow missing openTime/closeTime.
+function timeSlotsForBranch(branch) {
+  const open = branch?.openTime || "09:00";
+  const close = branch?.closeTime || "20:00";
+  const [oh, om] = open.split(":").map(Number);
+  const [ch, cm] = close.split(":").map(Number);
+  const startMin = oh * 60 + (om || 0);
+  const endMin = ch * 60 + (cm || 0);
+  const slots = [];
+  for (let m = startMin; m <= endMin; m += 10) {
+    const h = String(Math.floor(m / 60)).padStart(2, "0");
+    const mm = String(m % 60).padStart(2, "0");
+    slots.push(`${h}:${mm}`);
+  }
+  return slots;
+}
 
 /* ════════════════════════════════════════════════════
    IMAGE LIGHTBOX
@@ -2532,7 +2553,11 @@ function GuestBookingForm({ t, lang, services, branchInfo, onSubmitted }) {
           <input value={form.social} onChange={(e) => set("social", e.target.value)} className="ginput" placeholder="@username" />
         </GField>
         <GField label={t("guestBranch")}>
-          <select value={form.branch} onChange={(e) => set("branch", e.target.value)} className="ginput">
+          <select
+            value={form.branch}
+            onChange={(e) => setForm((f) => ({ ...f, branch: e.target.value, time: "" }))}
+            className="ginput"
+          >
             {branchInfo.map((b) => (
               <option key={b.id} value={String(b.id)}>{lang==="zh" ? b.nameZh : b.nameEn} ({b.sub})</option>
             ))}
@@ -2548,7 +2573,7 @@ function GuestBookingForm({ t, lang, services, branchInfo, onSubmitted }) {
         <GField label={t("guestTime")}>
           <select value={form.time} onChange={(e) => set("time", e.target.value)} className="ginput">
             <option value="">—</option>
-            {BUSINESS_HOURS.map((h) => <option key={h} value={h}>{h}</option>)}
+            {timeSlotsForBranch(selectedBranchInfo).map((h) => <option key={h} value={h}>{h}</option>)}
           </select>
         </GField>
         <GField label={t("guestContactVia")}>
@@ -2978,7 +3003,7 @@ function formatTime(d) {
    BOOKING MODAL
 ════════════════════════════════════════════════════ */
 
-function BookingModal({ t, lang, user, mode, data, services, onClose, onSave, onDelete }) {
+function BookingModal({ t, lang, user, mode, data, services, branchInfo, onClose, onSave, onDelete }) {
   const [form, setForm] = useState({ ...data, serviceIds: data.serviceIds || (data.serviceId ? [data.serviceId] : []) });
   const set = (field, value) => setForm((f) => ({ ...f, [field]: value }));
   const readOnly = mode === "view";
@@ -2987,7 +3012,14 @@ function BookingModal({ t, lang, user, mode, data, services, onClose, onSave, on
   const [showConfirm, setShowConfirm] = useState(false);
   const [saving, setSaving] = useState(false);
 
-  const BRANCH_LABELS = { 0: "Lahug Branch (Salinas Premier)", 1: "Emall Branch (2nd Floor)" };
+  // Derived from the live (admin-editable) branchInfo instead of a
+  // hardcoded map, so names/hours always stay in sync with what's
+  // actually configured in Location & Contact.
+  const selectedBranchInfo = branchInfo?.find((b) => String(b.id) === String(form.branch));
+  const branchLabelFor = (id) => {
+    const b = branchInfo?.find((x) => String(x.id) === String(id));
+    return b ? `${lang === "zh" ? b.nameZh : b.nameEn} (${b.sub})` : "";
+  };
 
   const handleSaveClick = () => {
     if (!form.name?.trim() || !form.serviceIds?.length || !form.date || !form.time) {
@@ -3019,7 +3051,7 @@ function BookingModal({ t, lang, user, mode, data, services, onClose, onSave, on
       `Date & Time: ${form.date || "—"}  ${form.time || ""}`.trim(),
       `Services: ${svcNames.length ? svcNames.join(", ") : "—"}`,
       `Customer: ${form.name || "—"}  |  Contact: ${contact}`,
-      `Branch: ${BRANCH_LABELS[form.branch] ?? form.branch ?? "—"}`,
+      `Branch: ${branchLabelFor(form.branch) || form.branch || "—"}`,
     ].join("\n");
   };
 
@@ -3115,13 +3147,21 @@ function BookingModal({ t, lang, user, mode, data, services, onClose, onSave, on
             <Field label={`${t("date")} *`}>
               <input type="date" value={form.date} onChange={(e) => set("date", e.target.value)} className="input" />
             </Field>
-            <Field label={`${t("time")} *`}>
-              <input type="time" value={form.time} onChange={(e) => set("time", e.target.value)} className="input" />
-            </Field>
             <Field label={t("branch")}>
-              <select value={form.branch} onChange={(e) => set("branch", Number(e.target.value))} className="input">
-                <option value={0}>Lahug (Salinas Premier)</option>
-                <option value={1}>Emall (2nd Floor)</option>
+              <select
+                value={form.branch}
+                onChange={(e) => setForm((f) => ({ ...f, branch: Number(e.target.value), time: "" }))}
+                className="input"
+              >
+                {(branchInfo || []).map((b) => (
+                  <option key={b.id} value={b.id}>{lang === "zh" ? b.nameZh : b.nameEn} ({b.sub})</option>
+                ))}
+              </select>
+            </Field>
+            <Field label={`${t("time")} *`}>
+              <select value={form.time} onChange={(e) => set("time", e.target.value)} className="input">
+                <option value="">—</option>
+                {timeSlotsForBranch(selectedBranchInfo).map((h) => <option key={h} value={h}>{h}</option>)}
               </select>
             </Field>
             <Field label={t("notes")}>
@@ -3197,7 +3237,7 @@ function BookingModal({ t, lang, user, mode, data, services, onClose, onSave, on
         {showConfirm && (
           <BookingConfirmDialog
             t={t} lang={lang} form={form} services={services}
-            branchLabel={BRANCH_LABELS[form.branch] ?? ""}
+            branchLabel={branchLabelFor(form.branch)}
             submitting={saving}
             onCancel={() => setShowConfirm(false)}
             onConfirm={handleConfirmSave}
@@ -3660,12 +3700,17 @@ function ContactPage({ t, lang, user, branchInfo, updateBranchInfo, showToast, m
 
 function BranchCard({ t, lang, isAdmin, branch, idx, updateBranchInfo, showToast, mapImage, handleMapUpload, removeMapImage }) {
   const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState({ addr: branch.addr, phone: branch.phone, hours: branch.hours });
+  const [draft, setDraft] = useState({
+    addr: branch.addr, phone: branch.phone, hours: branch.hours,
+    openTime: branch.openTime || "09:00", closeTime: branch.closeTime || "20:00",
+  });
 
   const save = () => {
     updateBranchInfo(idx, "addr", draft.addr);
     updateBranchInfo(idx, "phone", draft.phone);
     updateBranchInfo(idx, "hours", draft.hours);
+    updateBranchInfo(idx, "openTime", draft.openTime);
+    updateBranchInfo(idx, "closeTime", draft.closeTime);
     setEditing(false);
     showToast(t("savedInfo"), "success");
   };
@@ -3711,6 +3756,26 @@ function BranchCard({ t, lang, isAdmin, branch, idx, updateBranchInfo, showToast
         <InfoRow icon={<MapPin size={14} />} label={t("address")} value={branch.addr} editing={editing} draft={draft.addr} onChange={(v) => setDraft((d) => ({ ...d, addr: v }))} />
         <InfoRow icon={<Phone size={14} />} label={t("phoneLabel")} value={branch.phone} editing={editing} draft={draft.phone} onChange={(v) => setDraft((d) => ({ ...d, phone: v }))} />
         <InfoRow icon={<Clock size={14} />} label={t("openingHours")} value={branch.hours} editing={editing} draft={draft.hours} onChange={(v) => setDraft((d) => ({ ...d, hours: v }))} />
+        {editing && (
+          <div className="flex items-start gap-2.5">
+            <span className="text-rose-400 mt-1"><Clock size={14} className="opacity-0" /></span>
+            <div className="flex-1 flex gap-2 items-end">
+              <div className="flex-1">
+                <div className="text-[10px] text-stone-400 mb-0.5">{t("bookingOpenTime")}</div>
+                <input type="time" value={draft.openTime} onChange={(e) => setDraft((d) => ({ ...d, openTime: e.target.value }))}
+                  className="w-full px-2.5 py-1.5 text-sm border border-stone-200 rounded-lg focus:outline-none focus:border-rose-400 bg-stone-50 focus:bg-white transition" />
+              </div>
+              <div className="flex-1">
+                <div className="text-[10px] text-stone-400 mb-0.5">{t("bookingCloseTime")}</div>
+                <input type="time" value={draft.closeTime} onChange={(e) => setDraft((d) => ({ ...d, closeTime: e.target.value }))}
+                  className="w-full px-2.5 py-1.5 text-sm border border-stone-200 rounded-lg focus:outline-none focus:border-rose-400 bg-stone-50 focus:bg-white transition" />
+              </div>
+            </div>
+          </div>
+        )}
+        {editing && (
+          <div className="text-[11px] text-stone-400 pl-6 -mt-1.5">{t("bookingHoursHint")}</div>
+        )}
       </div>
 
       {isAdmin && (
@@ -3718,7 +3783,7 @@ function BranchCard({ t, lang, isAdmin, branch, idx, updateBranchInfo, showToast
           {editing ? (
             <div className="flex gap-2">
               <button onClick={save} className="text-sm font-medium bg-rose-400 hover:bg-rose-500 text-white px-4 py-2 rounded-lg transition">{t("saveInfo")}</button>
-              <button onClick={() => { setEditing(false); setDraft({ addr: branch.addr, phone: branch.phone, hours: branch.hours }); }} className="text-sm font-medium text-stone-500 border border-stone-200 px-4 py-2 rounded-lg transition">{t("cancel")}</button>
+              <button onClick={() => { setEditing(false); setDraft({ addr: branch.addr, phone: branch.phone, hours: branch.hours, openTime: branch.openTime || "09:00", closeTime: branch.closeTime || "20:00" }); }} className="text-sm font-medium text-stone-500 border border-stone-200 px-4 py-2 rounded-lg transition">{t("cancel")}</button>
             </div>
           ) : (
             <button onClick={() => setEditing(true)} className="flex items-center gap-1.5 text-sm font-medium text-stone-500 border border-stone-200 hover:border-rose-300 hover:text-rose-500 px-4 py-2 rounded-lg transition">
